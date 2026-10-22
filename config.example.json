@@ -1,0 +1,35 @@
+{
+  "offre": {
+    "signature": "",
+    "site": "",
+    "ce_que_je_vends": "",
+    "pour_qui": ""
+  },
+  "consignes": "",
+  "recherche": {
+    "metier": "salle de sport",
+    "ville": "Bruxelles",
+    "centre": {
+      "lat": 50.8503,
+      "lon": 4.3517
+    },
+    "rayon_m": 2000,
+    "nombre": 5,
+    "source": "osm",
+    "pays": "BE",
+    "veut": {
+      "emails": true,
+      "telephones": true
+    }
+  },
+  "equipe": {
+    "lecteurs_en_parallele": 3,
+    "redacteurs_en_parallele": 2,
+    "score_minimum": 60
+  },
+  "redaction": {
+    "moteur": "claude",
+    "modele": "",
+    "langue": "auto"
+  }
+}

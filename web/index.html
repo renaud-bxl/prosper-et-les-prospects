@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#040405">
+  <title>Prosper et les prospects</title>
+  <meta name="description" content="Votre équipe d’agents de prospection au Benelux. Français, Nederlands, English.">
+  <link rel="preload" href="/fonts/pixelify-sans-latin-500-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/pixelify-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/src/qg.css">
+</head>
+<body>
+  <main id="qg">
+    <canvas id="world"></canvas>
+    <nav class="app-controls"><select id="interface-language" aria-label="Langue de l’interface"><option value="fr">FR</option><option value="nl">NL</option><option value="en">EN</option></select><div id="updates"></div></nav>
+    <div id="hud"></div>
+    <div id="cine"></div>
+    <button class="cn-play" id="cn-play" type="button" aria-label="Lancer le film" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg></button>
+    <aside id="fiche"></aside>
+    <aside id="launch" hidden></aside>
+    <header id="carte-title" hidden><span class="tag"><i></i>Prosper et les prospects</span><h1>Le Benelux, terrain de vos agents.</h1><p>Choisissez une ville. Prosper et son équipe préparent la prochaine rencontre.</p></header>
+    <button type="button" id="btn-carte" class="btn-carte" hidden>Nouvelle mission</button>
+    <div id="tip" class="tip" hidden></div>
+    <p class="attrib">Données © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">les contributeurs d’OpenStreetMap</a> · tuiles <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a></p>
+    <div id="mission-status" role="status" hidden></div>
+    <p id="loading" hidden>Construction de la ville…</p>
+  </main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
+

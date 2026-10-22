@@ -1,0 +1,5 @@
+---
+description: Conventions de Prosper et les prospects
+alwaysApply: true
+---
+Lire et suivre AGENTS.md à la racine du dépôt. Lire README.md pour l’installation et la validation. Ne jamais publier .env, config.json ou data/. Ne pas remplacer les fonctions réelles par une démonstration simulée.
