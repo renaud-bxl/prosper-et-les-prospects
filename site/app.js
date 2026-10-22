@@ -15,7 +15,7 @@
     nl: {
       skip: 'Naar de installatie',
       navHow: 'De missie', navQuestions: 'Vragen', install: 'Prosper installeren ↗',
-      release: 'Versie 1.0.1 · Het team staat klaar',
+      release: 'Versie 1.0.2 · Het team staat klaar',
       hero: 'Een stad.<br>Een team.<br><span>Uw contacten.</span>',
       lead: 'Vertrouw uw zoektocht toe aan Prosper. Zijn team verkent bedrijven in de Benelux, bekijkt hun websites en bereidt voor elk bedrijf een eerste contact voor. U ziet hen vooruitgaan. U beslist over de volgende stap.',
       start: 'Mijn team installeren ↗', github: 'Bekijk het project op GitHub ↗',
@@ -82,7 +82,7 @@
     en: {
       skip: 'Skip to installation',
       navHow: 'The mission', navQuestions: 'Questions', install: 'Install Prosper ↗',
-      release: 'Version 1.0.1 · Your team is ready',
+      release: 'Version 1.0.2 · Your team is ready',
       hero: 'A city.<br>A team.<br><span>Your prospects.</span>',
       lead: 'Let Prosper lead your search. His team explores businesses across the Benelux, reads their websites and prepares a first contact for each one. You watch them make progress. You decide what comes next.',
       start: 'Install my team ↗', github: 'View the project on GitHub ↗',
@@ -147,9 +147,9 @@
     },
   };
   const metadata = {
-    fr: {...original, language:'Langue', navigation:'Navigation', theme:'Changer l’apparence', pause:'Mettre l’animation en pause', resume:'Reprendre l’animation', copying:'Copie en cours…', copied:'Les commandes ont été copiées.', copyFailed:'La copie a échoué. Sélectionnez et copiez les commandes ci-dessus.'},
-    nl: {title:'Prosper et les prospects — Een stad. Een team. Uw volgende klanten.', description:'Een geanimeerd prospectieteam voor de Benelux. Echte bedrijven, persoonlijke e-mails en uw goedkeuring.', screenshot:'Echte schermafbeelding van het hoofdkwartier en de personages in Prosper', canvas:'Het team van Prosper in een geïllustreerde stad in de Benelux', language:'Taal', navigation:'Navigatie', theme:'Weergave wijzigen', pause:'Animatie pauzeren', resume:'Animatie hervatten', copying:'Bezig met kopiëren…', copied:'De opdrachten zijn gekopieerd.', copyFailed:'Kopiëren is mislukt. Selecteer en kopieer de opdrachten hierboven.'},
-    en: {title:'Prosper et les prospects — A city. A team. Your next clients.', description:'An animated prospecting team for the Benelux. Real businesses, personalised emails and your approval.', screenshot:'Actual screenshot of the headquarters and characters in Prosper', canvas:'Prosper’s team in an illustrated Benelux town', language:'Language', navigation:'Navigation', theme:'Change appearance', pause:'Pause animation', resume:'Resume animation', copying:'Copying…', copied:'The commands have been copied.', copyFailed:'Copying failed. Select and copy the commands above.'},
+    fr: {...original, language:'Langue', navigation:'Navigation', theme:'Changer l’apparence', pause:'Mettre l’animation en pause', resume:'Reprendre l’animation', copying:'Copie en cours…', copied:'La commande a été copiée.', copyFailed:'La copie a échoué. Sélectionnez et copiez les commandes ci-dessus.'},
+    nl: {title:'Prosper et les prospects — Een stad. Een team. Uw volgende klanten.', description:'Een geanimeerd prospectieteam voor de Benelux. Echte bedrijven, persoonlijke e-mails en uw goedkeuring.', screenshot:'Echte schermafbeelding van het hoofdkwartier en de personages in Prosper', canvas:'Het team van Prosper in een geïllustreerde stad in de Benelux', language:'Taal', navigation:'Navigatie', theme:'Weergave wijzigen', pause:'Animatie pauzeren', resume:'Animatie hervatten', copying:'Bezig met kopiëren…', copied:'De opdracht is gekopieerd.', copyFailed:'Kopiëren is mislukt. Selecteer en kopieer de opdrachten hierboven.'},
+    en: {title:'Prosper et les prospects — A city. A team. Your next clients.', description:'An animated prospecting team for the Benelux. Real businesses, personalised emails and your approval.', screenshot:'Actual screenshot of the headquarters and characters in Prosper', canvas:'Prosper’s team in an illustrated Benelux town', language:'Language', navigation:'Navigation', theme:'Change appearance', pause:'Pause animation', resume:'Resume animation', copying:'Copying…', copied:'The command has been copied.', copyFailed:'Copying failed. Select and copy the commands above.'},
   };
   const languageSelect=document.querySelector('#language');
   const copyButton=document.querySelector('#copy');

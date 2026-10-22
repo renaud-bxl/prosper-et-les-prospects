@@ -76,6 +76,7 @@ function hairBack(g, person) {
 
 function hairFront(g, p, back) {
   if (p.style === 'beanie') {
+    if(back) { oval(g,0,-55,13,13,p.hair); oval(g,0,-45,10,5,p.hair); }
     g.beginPath(); g.moveTo(-15,-58); g.bezierCurveTo(-17,-80,15,-81,16,-58); g.closePath(); g.fillStyle = p.accent; g.fill();
     rounded(g,-16,-64,33,8,3,'#c4a374');
     for (let x=-11;x<16;x+=5) limb(g,x,-68,x,-72,'#b5946470',1.2);
@@ -93,8 +94,55 @@ function hairFront(g, p, back) {
   else if (p.style === 'sweep' || p.style === 'ponytail') curve(g,p.hairLight,1.6,-10,-66,-2,-72,7,-68);
 }
 
+// A single right-facing profile is mirrored with the entire body for the left view.
+function profileFace(g, p, { eyes, pose, phase }) {
+  if (p.style==='ponytail') {
+    g.beginPath(); g.moveTo(-10,-64); g.bezierCurveTo(-29,-66,-26,-43,-17,-37); g.quadraticCurveTo(-19,-51,-10,-52); g.fillStyle=p.hair; g.fill();
+    rounded(g,-20,-63,7,4,2,p.accent);
+  }
+  if (p.style==='bun') { oval(g,-12,-70,8,8,p.hair); oval(g,-14,-73,3.5,2,p.hairLight); }
+  if (p.style==='curls') for (const [x,y,r] of [[-12,-50,6],[-14,-59,7],[-10,-68,7],[-2,-73,7],[6,-70,7]]) oval(g,x,y,r,r,p.hair);
+  rounded(g,-4,-45,8,11,3,p.skin);
+  g.beginPath(); g.moveTo(-11,-62); g.bezierCurveTo(-8,-73,8,-73,12,-62);
+  g.quadraticCurveTo(12,-58,11,-55); g.lineTo(16,-51); g.quadraticCurveTo(18,-49,12,-48);
+  g.quadraticCurveTo(14,-44,10,-43); g.quadraticCurveTo(9,-39,3,-40); g.bezierCurveTo(-9,-40,-13,-49,-11,-62);
+  g.closePath(); g.fillStyle=p.skin; g.fill();
+  oval(g,6,-47.5,3.2,1.6,`${p.blush}65`);
+  if (p.beard) {
+    g.beginPath(); g.moveTo(-4,-48); g.quadraticCurveTo(3,-43,12,-47); g.quadraticCurveTo(13,-40,4,-39.5); g.quadraticCurveTo(-3,-41,-4,-48); g.fillStyle=`${p.hair}85`; g.fill();
+  }
+  if (eyes==='blink') curve(g,'#43574c',1.5,6.5,-54,9,-53,11,-54);
+  else if (eyes==='happy') curve(g,'#43574c',1.5,6.5,-54,9,-57,11,-54);
+  else { oval(g,9,-54.5,1.8,2.5,'#344b43'); oval(g,9.4,-55.3,.6,.8,'#fffaf0'); }
+  curve(g,p.hair,1.2,6,-59.5,8.5,-60.5,11,-59.5);
+  if (pose==='speak'||eyes==='talk') oval(g,11,-44.3,1.6,1+Math.abs(Math.sin(phase)),'#925c4b');
+  else curve(g,'#925c4b',1.2,9,-44.7,11,-44,12.4,-45);
+  // Hair follows the back of the skull, leaving the nose, chin and one eye clear.
+  if (p.style==='beanie') {
+    g.beginPath(); g.moveTo(-13,-58); g.bezierCurveTo(-18,-79,10,-81,13,-60); g.closePath(); g.fillStyle=p.accent; g.fill();
+    rounded(g,-14,-64,28,7,3,'#c4a374');
+    for(let x=-10;x<11;x+=5) limb(g,x,-68,x,-72,'#b5946470',1.2);
+    rounded(g,5,-62,5,4,1.2,'#eee4ca');
+  } else {
+    g.beginPath(); g.moveTo(-11,-47); g.bezierCurveTo(-18,-58,-13,-75,0,-75); g.quadraticCurveTo(13,-75,13,-61);
+    if(p.style==='crop') { g.lineTo(8,-65); g.quadraticCurveTo(1,-66,-3,-60); }
+    else { g.quadraticCurveTo(6,-63,3,-66); g.quadraticCurveTo(-1,-61,-5,-60); }
+    g.lineTo(-6,-48); g.closePath(); g.fillStyle=p.hair; g.fill();
+    if(p.style!=='curls') curve(g,p.hairLight,1.5,-10,-64,-5,-72,4,-70);
+    else for(const [x,y,r]of [[-9,-65,5],[-3,-70,5],[4,-70,5],[9,-65,5]]) oval(g,x,y,r,r,p.hair);
+  }
+  oval(g,-5,-52,3.2,4,p.skin); curve(g,`${p.blush}a0`,1,-6,-53,-3,-54,-4,-50);
+  if(p.glasses) {
+    g.beginPath(); g.ellipse(8.5,-54.5,4.5,4.2,0,0,Math.PI*2); g.strokeStyle='#536e64'; g.lineWidth=1.5; g.stroke();
+    limb(g,-4,-54.5,4,-55,'#536e64',1.4); limb(g,12.5,-54.5,14,-53.5,'#536e64',1.2);
+  }
+  if(p.earrings) oval(g,-5,-47,1.8,2.4,p.accent);
+  if(p.pencil) { limb(g,-10,-66,-12,-52,'#d8b46b',2.3); limb(g,-10,-66,-10.4,-63,'#d69a96',2.7); }
+}
+
 function face(g, p, { direction, eyes, pose, phase }) {
-  const back=direction==='up', side=direction==='left'||direction==='right', dx=side?3:eyes==='left'?-1.7:eyes==='right'?1.7:0;
+  if(direction==='left'||direction==='right') { profileFace(g,p,{eyes,pose,phase}); return; }
+  const back=direction==='up', dx=eyes==='left'?-1.7:eyes==='right'?1.7:0;
   hairBack(g,p);
   oval(g,-13,-53,3,4,p.skin); oval(g,13,-53,3,4,p.skin);
   rounded(g,-4,-44,8,10,3,p.skin);
@@ -122,7 +170,6 @@ function face(g, p, { direction, eyes, pose, phase }) {
       limb(g,-1+dx,-54,1+dx,-54,'#536e64',1.4);
     }
     if (p.earrings) { oval(g,-14,-48,1.8,2.4,p.accent); oval(g,14,-48,1.8,2.4,p.accent); }
-    if (side) oval(g,14,-51,3,2.4,p.skin);
   }
   hairFront(g,p,back);
   if (p.pencil && !back) {
@@ -132,41 +179,83 @@ function face(g, p, { direction, eyes, pose, phase }) {
 
 export function drawHuman(g, p, motion = {}) {
   const { pose='stand', direction='down', eyes='open', step=0, bob=0, phase=0 }=motion;
-  const back=direction==='up', side=direction==='left'||direction==='right';
+  const back=direction==='up', side=direction==='left'||direction==='right', walking=pose==='walk';
+  const stride=walking?step:0, bodyBob=walking?(1-Math.abs(stride))*.8:bob;
   g.save();
   if (direction==='left') g.scale(-1,1);
-  if (side) g.scale(.9,1);
-  g.translate(0,-bob);
-  // Legs and shoes remain anchored at the same ground point in every pose.
-  for (const sign of [-1,1]) {
-    const stride=sign*step*3.3, x=sign*6;
-    limb(g,x,-19,x+stride,-5,p.trousers,6.8);
-    rounded(g,x+stride-4,-6,11,5.5,2.8,p.shoes);
-    limb(g,x+stride-1,-5,x+stride+4,-5,'#ffffff25',1.1);
-  }
+  // Feet stay relative to the ground; only hips, shoulders and head bob.
+  const legs=[-1,1].map(sign=>{
+    const swing=sign*stride, lift=walking?Math.max(0,sign*Math.cos(phase)):0;
+    return side ? {sign,hipX:sign*1.7,x:sign*1.7+swing*6,y:-3.8-lift*3.2,lift}
+      : {sign,hipX:sign*5.7,x:sign*5.7+swing*.4,y:-3.8+swing*(back?-2.8:2.8)-lift*1.5,lift};
+  });
+  const drawLeg=leg=>{
+    const {hipX,x,y,lift,sign}=leg;
+    const kneeX=(hipX+x)*.5+(side?lift*1.7:sign*.4), kneeY=(-19-bodyBob+y)*.5+lift*.7;
+    limb(g,hipX,-19-bodyBob,kneeX,kneeY,p.trousers,side?6.5:6.8);
+    limb(g,kneeX,kneeY,x,y-1.3,p.trousers,side?5.5:6);
+    if(side) {
+      rounded(g,x-3.7,y-2,11,5,2.5,p.shoes);
+      limb(g,x-1.8,y+1.4,x+5.5,y+1.4,'#ffffff25',1);
+    } else {
+      rounded(g,x-4.4,y-1.6,8.8,5.2,2.6,p.shoes);
+      if(back) limb(g,x-2.8,y-.1,x+2.8,y-.1,'#ffffff30',1.2);
+      else curve(g,'#ffffff25',1,x-2.6,y+1.8,x,y+2.5,x+2.6,y+1.8);
+    }
+  };
+  const sideHand=(near)=>{
+    const sign=near?1:-1;
+    if(['carry','read','type'].includes(pose)) return [near?11:7,-25+Math.sin(phase)*.5];
+    if(pose==='think'&&near) return [11,-45];
+    if(['wave','raise','cheer'].includes(pose)&&near) return [15+Math.sin(phase)*2,-61];
+    if(pose==='cheer'&&!near) return [7,-57];
+    return [sign*1.8-sign*stride*6.2,-20.5+Math.abs(stride)*.5];
+  };
+  const drawSideArm=near=>{
+    const [hx,hy]=sideHand(near), sx=near?2.5:-2.5;
+    const elbowX=hy<-40?10:(sx+hx)*.5-1.8, elbowY=hy<-40?-43:-28;
+    limb(g,sx,-35,elbowX,elbowY,p.jacket,near?7:6);
+    limb(g,elbowX,elbowY,hx,hy,p.skin,near?5.5:4.7);
+    oval(g,hx,hy,near?3.5:3,3.3,p.skin);
+  };
+  if(side) {
+    drawLeg(legs[0]);
+    g.save(); g.translate(0,-bodyBob); drawSideArm(false); g.restore();
+    drawLeg(legs[1]);
+  } else for(const leg of legs.sort((a,b)=>a.y-b.y)) drawLeg(leg);
+  g.translate(0,-bodyBob);
   const shirt=g.createLinearGradient(-14,-40,15,-17); shirt.addColorStop(0,p.jacket); shirt.addColorStop(1,p.jacket);
-  rounded(g,-15,-41,30,25,[11,11,7,7],shirt);
-  if (!back) {
+  rounded(g,side?-10.5:-15,-41,side?22:30,25,[10,10,7,7],shirt);
+  if(side) {
+    // The jacket opening is at the leading edge of a profile, not on its centre.
+    curve(g,p.shirt,3,8,-40,7,-32,9,-26);
+    if(p.id==='prosper') { rounded(g,-6,-41,17,6,2.5,p.accent); rounded(g,5,-37,5,11,2,'#94b49d'); }
+  } else if (!back) {
     g.beginPath(); g.moveTo(-6,-41); g.lineTo(0,-27); g.lineTo(6,-41); g.closePath(); g.fillStyle=p.shirt; g.fill();
     limb(g,0,-27,0,-19,'#ffffff30',1.2);
     if (p.id==='prosper') { rounded(g,-10,-40,20,7,3,p.accent); limb(g,-7,-36,6,-31,'#e6ead7',2); rounded(g,0,-35,6,10,2,'#94b49d'); }
     else { oval(g,9,-30,1,1,p.accent); oval(g,9,-24,1,1,p.accent); }
   } else limb(g,-8,-35,7,-35,'#ffffff25',1.2);
-  // Sleeves, forearms and rounded hands retain human anatomy in all legacy poses.
-  let hands=[[-19,-20+step*3],[19,-20-step*3]];
+  let hands=[[-19,-20+stride*1.8],[19,-20-stride*1.8]];
   if (['carry','read','type'].includes(pose)) hands=[[-10,-25+Math.sin(phase)*.7],[10,-25-Math.sin(phase)*.7]];
   if (pose==='think') hands=[[-19,-20],[9,-45]];
   if (pose==='wave'||pose==='raise') hands=[[-19,-20],[26+Math.sin(phase)*2,-61]];
   if (pose==='cheer') hands=[[-26,-58+Math.sin(phase)*2],[26,-58-Math.sin(phase)*2]];
   if (pose==='fly') hands=[[-23,-24],[23,-29]]; // léger déplacement, jamais d'hélice ni de pièce mécanique
-  for (let i=0;i<2;i++) {
+  if(side) drawSideArm(true);
+  else for (let i=0;i<2;i++) {
     const sign=i?1:-1,[hx,hy]=hands[i], elbowX=hy<-40?sign*24:sign*17, elbowY=hy<-40?-43:-30;
     limb(g,sign*12,-35,elbowX,elbowY,p.jacket,7);
     limb(g,elbowX,elbowY,hx,hy,p.skin,5.5);
     oval(g,hx,hy,3.7,3.5,p.skin);
   }
   if (p.satchel) {
-    limb(g,-10,-40,13,-18,'#9c7b5c',3); rounded(g,9,-25,13,16,4,'#b18e69'); rounded(g,9,-25,13,6,3,'#c5a37b'); oval(g,15,-18,1.3,1.3,'#f0dab2');
+    if(side) {
+      curve(g,'#9c7b5c',2.7,1,-39,-9,-33,-9,-22); rounded(g,-15,-24,11,15,4,'#b18e69'); rounded(g,-15,-24,11,5,2.5,'#c5a37b'); oval(g,-9,-18,1.2,1.2,'#f0dab2');
+    } else {
+      limb(g,-10,-40,13,-18,'#9c7b5c',3); rounded(g,9,-25,13,16,4,'#b18e69');
+      if(!back) { rounded(g,9,-25,13,6,3,'#c5a37b'); oval(g,15,-18,1.3,1.3,'#f0dab2'); }
+    }
   }
   face(g,p,{direction,eyes,pose,phase});
   if (['carry','read','type'].includes(pose) && !back) {

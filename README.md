@@ -10,16 +10,44 @@ Adaptation du [QG des agents](https://github.com/devlikemasta/qg-des-agents), so
 
 ## Installer et démarrer
 
-Prérequis : **Node.js 22.13 ou plus récent** et **Git**. Pour écrire des mails, connectez Claude Code ou Codex sur votre ordinateur. La collecte et l’analyse seules fonctionnent sans assistant de rédaction.
+Prérequis déjà installés : **Node.js 22.13 ou plus récent** et **Git**. Aucun droit administrateur n’est demandé et l’installateur n’installe pas ces outils à votre place. Pour écrire des mails, connectez Claude Code ou Codex sur votre ordinateur. La collecte et l’analyse seules fonctionnent sans assistant de rédaction.
+
+Sur **macOS ou Linux**, collez cette commande dans un Terminal interactif :
 
 ```sh
-git clone https://github.com/renaud-bxl/prosper-et-les-prospects.git
-cd prosper-et-les-prospects
-npm ci
+curl -fsSL https://raw.githubusercontent.com/renaud-bxl/prosper-et-les-prospects/main/install.sh | sh
+```
+
+Sur **Windows**, ouvrez PowerShell et collez :
+
+```powershell
+irm 'https://raw.githubusercontent.com/renaud-bxl/prosper-et-les-prospects/main/install.ps1' | iex
+```
+
+L’installateur Windows est préparé mais son exécution doit encore être validée sur Windows ; les tests natifs sont explicitement sautés sur le Mac de développement.
+
+L’installateur propose **Documents**, les **disques montés** disponibles et un **chemin personnalisé**. Les noms et chemins des disques sont affichés dans le terminal, pas détectés par la page web. Pour un disque, un sous-dossier `Prosper et les prospects` est proposé ; un chemin personnalisé désigne le **dossier final exact**. Les chemins contenant des espaces sont pris en charge.
+
+Un récapitulatif affiche le dossier exact avant toute création, tout téléchargement du projet et toute installation de dépendances. Confirmez avec `o` sur macOS/Linux ou `INSTALLER` sur Windows. Une annulation ne crée aucun fichier du projet. Sur macOS/Linux, les questions passent par `/dev/tty` quand le script est reçu dans le pipe ; un lancement sans terminal interactif est refusé.
+
+Le projet est ensuite cloné depuis ce dépôt, sur la branche **main**, puis ses dépendances sont installées, l’interface est construite et Prosper démarre. Les missions, réglages et brouillons restent dans le dossier choisi. Si vous choisissez un disque externe, gardez-le branché pendant l’utilisation.
+
+**Un dossier non vide, un fichier ou un lien symbolique est refusé. Aucun dossier existant n’est effacé ou remplacé.** Pour une installation déjà présente, ouvrez son dossier et relancez `npm start` ; utilisez ensuite le bouton de mise à jour du logiciel. Après un téléchargement ou une construction interrompus, le dossier partiellement installé est conservé pour inspection : ne relancez pas l’installateur dessus sans avoir vérifié son contenu.
+
+Le logiciel ouvre **http://127.0.0.1:5577** et n’écoute que sur votre ordinateur. Pour les lancements suivants :
+
+```sh
+cd "/chemin/exact/choisi/Prosper et les prospects"
 npm start
 ```
 
-Le logiciel ouvre **http://127.0.0.1:5577**. Il n’écoute que sur votre ordinateur. Les lancements suivants demandent simplement `npm start` dans ce dossier. Sur macOS, `Lancer Prosper.command` propose le même démarrage ; sur Windows, utilisez `Lancer Prosper.cmd`.
+Remplacez le chemin par celui du récapitulatif. Sur macOS, `Lancer Prosper.command` propose le même démarrage ; sur Windows, utilisez `Lancer Prosper.cmd` dans le dossier installé.
+
+Pour préciser un dossier macOS/Linux dès le départ tout en conservant la confirmation :
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/renaud-bxl/prosper-et-les-prospects/main/install.sh | sh -s -- --dir "/chemin/absolu/Prosper et les prospects"
+```
 
 ## Première mission
 

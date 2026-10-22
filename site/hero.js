@@ -1,4 +1,5 @@
-import {CHARACTERS,drawHuman,poseFor} from './assets/humans.js';
+import {CHARACTERS,drawHuman,poseFor} from './assets/humans.js?v=forward-20261023';
+import {patrolAt} from './motion.js';
 const canvas=document.querySelector('#town-people'),g=canvas.getContext('2d');
 const toggle=document.querySelector('#scene-toggle');
 const grid=document.querySelector('#people-grid');
@@ -17,6 +18,25 @@ document.addEventListener('prosper-language',updateLabels);
 reduced.addEventListener('change',e=>{paused=e.matches;updateLabels();draw();});
 if('IntersectionObserver' in window)new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;},{threshold:0}).observe(canvas);
 const positions=[[365,405],[600,495],[155,390],[675,420],[480,555],[425,395],[485,410]];
-function draw(){const ratio=Math.min(2,devicePixelRatio||1),width=Math.round(800*ratio),height=Math.round(650*ratio);if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}g.setTransform(ratio,0,0,ratio,0,0);g.clearRect(0,0,800,650);const order=people.map((p,i)=>{let [x,y]=positions[i];const walk=[1,2,4].includes(i);if(walk){const travel=Math.sin(time*.28+p.phase);x+=travel*(i===1?85:35);y+=Math.sin(time*.2+p.phase)*12;}return{p,i,x,y,walk};}).sort((a,b)=>a.y-b.y);for(const {p,i,x,y,walk}of order){g.save();g.translate(x,y);if(i===selected){g.fillStyle='#fffdf480';g.strokeStyle='#79977e70';g.lineWidth=1.5;g.beginPath();g.ellipse(0,1,26,9,0,0,Math.PI*2);g.fill();g.stroke();}g.scale(1.04,1.04);const pose=walk&&!paused?'walk':i===selected?'wave':i>4?'carry':'stand';const motion=poseFor(pose,0,time,p.phase);drawHuman(g,p,{...motion,pose,direction:'down',eyes:'open'});g.restore();}}
+const routes={
+  1:{from:[560,510],to:[686,510],seconds:7,pause:1.2,offset:1.6},
+  2:{from:[175,405],to:[245,405],seconds:5,pause:1.4,offset:3},
+  4:{from:[490,570],to:[490,486],seconds:6,pause:1.2,offset:2.4},
+};
+function draw(){
+  const ratio=Math.min(2,devicePixelRatio||1),width=Math.round(800*ratio),height=Math.round(650*ratio);
+  if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+  g.setTransform(ratio,0,0,ratio,0,0);g.clearRect(0,0,800,650);
+  const order=people.map((p,i)=>{const route=routes[i];return{p,i,...(route?patrolAt(route,time):{x:positions[i][0],y:positions[i][1],walking:false,direction:'down',distance:0})};}).sort((a,b)=>a.y-b.y);
+  for(const {p,i,x,y,walking,direction,distance}of order){
+    g.save();g.translate(x,y);
+    if(i===selected){g.fillStyle='#fffdf480';g.strokeStyle='#79977e70';g.lineWidth=1.5;g.beginPath();g.ellipse(0,1,26,9,0,0,Math.PI*2);g.fill();g.stroke();}
+    g.scale(1.04,1.04);
+    const moving=walking&&!paused,pose=moving?'walk':routes[i]?'stand':i===selected?'wave':i>4?'carry':'stand';
+    const motion=poseFor(pose,0,time,p.phase);
+    if(moving){motion.phase=distance/14*Math.PI*2;motion.step=Math.sin(motion.phase);motion.bob=Math.abs(motion.step)*1.1;}
+    drawHuman(g,p,{...motion,pose,direction,eyes:'open'});g.restore();
+  }
+}
 function frame(ts){const dt=last?Math.min(.1,(ts-last)/1000):0;last=ts;if(visible&&!document.hidden){if(!paused)time+=dt;draw();}requestAnimationFrame(frame);}
 updateLabels();draw();requestAnimationFrame(frame);
