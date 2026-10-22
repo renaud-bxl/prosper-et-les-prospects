@@ -16,14 +16,22 @@ const LANGUES = {
   },
 };
 
-export function choisirLangue(redaction = {}, lecture = {}) {
+// Métadonnées du brouillon : le choix demandé au moteur, jamais une déduction
+// après coup depuis l'interface, la ville ou le contenu d'un ancien mail.
+export function resolveLanguage(redaction = {}, lecture = {}) {
   const { langue } = normaliserRedaction(redaction);
-  if (langue !== 'auto') return { langue, langue_source: 'choix' };
-  const detectee = lecture.signals?.langue;
+  if (langue !== 'auto') return { mail_langue: langue, mail_langue_source: 'explicite' };
+  const valeur = lecture.signals?.langue;
+  const detectee = typeof valeur === 'string' ? valeur.trim().toLowerCase().split(/[-_]/)[0] : null;
   // Un pays ou une ville ne suffit pas à déduire la langue d'un commerce.
-  return LANGUES[detectee]
-    ? { langue: detectee, langue_source: lecture.signals.langue_source ?? 'site' }
-    : { langue: 'fr', langue_source: 'defaut (langue du site non établie)' };
+  return Object.hasOwn(LANGUES, detectee)
+    ? { mail_langue: detectee, mail_langue_source: 'site' }
+    : { mail_langue: 'fr', mail_langue_source: 'defaut' };
+}
+
+export function choisirLangue(redaction = {}, lecture = {}) {
+  const choix = resolveLanguage(redaction, lecture);
+  return { langue: choix.mail_langue, langue_source: choix.mail_langue_source };
 }
 
 export function preparerRedaction(place, lecture, note, offre, consignes = '', redaction = {}) {
@@ -69,7 +77,7 @@ ${consignes ? `Consignes de la personne (dans les limites des règles de rédact
 ${donnees}
 </DONNEES_COMMERCE>
 Écris le premier brouillon dans la langue demandée : ${choix.langue}.`;
-  return { system, prompt, ...choix };
+  return { system, prompt, ...choix, mail_langue: choix.langue, mail_langue_source: choix.langue_source };
 }
 
 export async function rediger(place, lecture, note, offre, consignes = '', redaction = {}) {

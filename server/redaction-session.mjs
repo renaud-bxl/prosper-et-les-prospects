@@ -2,6 +2,8 @@
 // Les dépendances sont injectées : les tests ne lancent aucun modèle et ne touchent pas la base utilisateur.
 import { randomUUID } from 'node:crypto';
 import { normaliserRedaction, validerBrouillon } from './agents/moteurs.mjs';
+import { erreurRedaction, signauxRedaction } from './redaction-recovery.mjs';
+import { contactsUniques } from './mission-summary.mjs';
 
 const ELIGIBLE = new Set(['analyse', 'retenu', 'a_ecrire', 'erreur']);
 const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
@@ -64,7 +66,7 @@ export function lectureEnregistree(place) {
 }
 
 export function createDraftSessions({ getRun, listPlaces, getPlace, updatePlace, rediger, emit,
-  loadConfig, saveConfig, isMissionRunning = () => false, isUpdating = () => false, now = () => Date.now() }) {
+  loadConfig, saveConfig, isMissionRunning = () => false, isUpdating = () => false, onCompleted = () => {}, getTargets = () => null, now = () => Date.now() }) {
   const jobs = new Map(), completions = new Map();
   let active = null;
   const publicJob = (job) => job ? { ...job, errors: job.errors.map((error) => ({ ...error })) } : null;
@@ -79,13 +81,18 @@ export function createDraftSessions({ getRun, listPlaces, getPlace, updatePlace,
     if (run.status === 'en_cours') throw new DraftSessionError('mission_active', 'Attendez la fin de la mission avant de préparer les mails.', 409);
     const config = loadConfig();
     const request = normaliserDemandeBrouillons(body, config);
-    const threshold = Number.isFinite(Number(config.equipe?.score_minimum)) ? Number(config.equipe.score_minimum) : 60;
-    const candidates = listPlaces(runId).filter((place) => candidatBrouillon(place, threshold));
+    const historical = getTargets(runId) ?? {};
+    const threshold = Number.isFinite(historical.score_minimum) ? historical.score_minimum : Number.isFinite(Number(config.equipe?.score_minimum)) ? Number(config.equipe.score_minimum) : 60;
+    const rows = contactsUniques(listPlaces(runId), threshold);
+    // Passer explicitement d'une analyse seule à la rédaction reprend son objectif de contacts.
+    const target = historical.objectif_mails > 0 ? historical.objectif_mails : historical.objectif_mails === 0 && historical.objectif_contacts > 0 ? historical.objectif_contacts : null;
+    const missing = target === null ? Infinity : Math.max(0, target - rows.filter((row) => row.mail?.trim()).length);
+    const candidates = rows.filter((place) => candidatBrouillon(place, threshold)).slice(0, missing);
     if (!candidates.length) throw new DraftSessionError('no_candidates', 'Aucun client potentiel sans brouillon ne peut être rédigé dans cette mission.', 409);
     // L'offre explicite de la personne devient celle du prochain lancement ; les autres réglages sont conservés.
     saveConfig({ ...config, offre: request.offre, consignes: request.consignes, redaction: request.redaction });
     const job = { id: randomUUID(), runId, status: 'running', completed: 0, total: candidates.length,
-      failed: 0, skipped: 0, errors: [], startedAt: now(), endedAt: null };
+      failed: 0, skipped: 0, errors: [], startedAt: now(), endedAt: null, objectif_mails: target };
     jobs.set(runId, job);
     active = job;
     let resolveDone;
@@ -99,13 +106,16 @@ export function createDraftSessions({ getRun, listPlaces, getPlace, updatePlace,
           for (;;) {
             const queued = candidates[index++];
             if (!queued) return;
-            const place = getPlace(runId, queued.id);
+            const latestPlace = getPlace(runId, queued.id);
+            const place = latestPlace ? { ...latestPlace, to_email: queued.to_email } : null;
             if (!candidatBrouillon(place, threshold)) { job.completed++; job.skipped++; continue; }
             const { lecture, note } = lectureEnregistree(place);
-            updatePlace(runId, place.id, { status: 'ecriture' });
+            updatePlace(runId, place.id, { status: 'ecriture', to_email: place.to_email });
             emit(runId, agent, 'start', place.id, { name: place.name, batch: true });
             try {
-              const result = await rediger(place, lecture, note, request.offre, request.consignes, request.redaction);
+              const result = await rediger(place, lecture, note, request.offre, request.consignes, { ...request.redaction,
+                onRetry: (info) => emit(runId, agent, 'retry', place.id, { name: place.name, ...info, batch: true }),
+              });
               const draft = validerBrouillon(result);
               const latest = getPlace(runId, place.id);
               // Un choix manuel ou un brouillon arrivé entre-temps ne peut être écrasé.
@@ -114,15 +124,16 @@ export function createDraftSessions({ getRun, listPlaces, getPlace, updatePlace,
                 emit(runId, agent, 'error', place.id, { name: place.name, message: 'Le brouillon existant a été conservé.', batch: true });
                 continue;
               }
-              updatePlace(runId, place.id, { status: 'en_attente', ...draft });
-              emit(runId, agent, 'done', place.id, { name: place.name, ...draft, to: lecture.emails[0], duree_ms: result.duree_ms, batch: true });
+              const language = { mail_langue: result.mail_langue ?? null, mail_langue_source: result.mail_langue_source ?? null };
+              updatePlace(runId, place.id, { status: 'en_attente', ...draft, ...language, signals: signauxRedaction(latest.signals) });
+              emit(runId, agent, 'done', place.id, { name: place.name, ...draft, ...language, to: lecture.emails[0], duree_ms: result.duree_ms, attempts: result.attempts ?? 1, batch: true });
             } catch (error) {
               const latest = getPlace(runId, place.id);
-              if (latest && !['valide', 'refuse'].includes(latest.status) && !latest.mail?.trim()) updatePlace(runId, place.id, { status: 'erreur' });
-              const message = String(error.message ?? 'La rédaction a échoué.').slice(0, 500);
+              if (latest && !['valide', 'refuse'].includes(latest.status) && !latest.mail?.trim()) updatePlace(runId, place.id, { status: 'erreur', signals: signauxRedaction(latest.signals, error) });
+              const details = erreurRedaction(error);
               job.failed++;
-              job.errors.push({ placeId: place.id, message });
-              emit(runId, agent, 'error', place.id, { name: place.name, message, batch: true });
+              job.errors.push({ placeId: place.id, ...details });
+              emit(runId, agent, 'error', place.id, { name: place.name, ...details, batch: true });
             } finally { job.completed++; }
           }
         };
@@ -137,13 +148,15 @@ export function createDraftSessions({ getRun, listPlaces, getPlace, updatePlace,
         job.errors.push({ placeId: null, message: String(error.message ?? 'La rédaction a été interrompue.').slice(0, 500) });
       } finally {
         job.endedAt = now();
-        active = null;
-        try { emit(runId, 'chef', 'drafts:end', null, { ...publicJob(job), batch: true }); }
+        try {
+          await onCompleted(runId, publicJob(job));
+          emit(runId, 'chef', 'drafts:end', null, { ...publicJob(job), batch: true });
+        }
         catch (error) {
           job.status = 'failed';
           job.failed++;
           job.errors.push({ placeId: null, message: String(error.message ?? 'Journal de rédaction indisponible.').slice(0, 500) });
-        } finally { resolveDone(publicJob(job)); }
+        } finally { active = null; resolveDone(publicJob(job)); }
       }
     });
     return publicJob(job);

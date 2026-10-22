@@ -1,7 +1,8 @@
 // Le lecteur : ouvre le site de chaque commerce (accueil + pages contact, mentions, réservation),
 // relève l'adresse de contact affichée et les signaux utiles (réservation en ligne, discussion, WhatsApp…).
 
-import { fetchPublic } from './public-web.mjs';
+import { isIP } from 'node:net';
+import { fetchPublic, isPublicAddress } from './public-web.mjs';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 const MAX_BYTES = 1_500_000;
@@ -189,6 +190,113 @@ export function reservationReperee(html) {
   return provider ?? (texte ? 'oui (module ou lien repéré)' : null);
 }
 
+/** Informations explicitement publiées sur les pages déjà lues. Aucun appel réseau. */
+export function informationsPubliques(pages = [], place = {}) {
+  const info = { version: 1, pages: [], sites: [], adresse: [], horaires: [], emails: [], telephones: [], reseaux: [], services: [], liens: [] };
+  const plain = value => typeof value === 'string' || typeof value === 'number'
+    ? visibleText(decodeEntities(String(value))).replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 600) : '';
+  const attr = (raw, name) => raw.match(new RegExp('(?:^|\\s)' + name + '\\s*=\\s*["\x27]([^"\x27]*)["\x27]', 'i'))?.[1] ?? '';
+  const publicLink = (value, base) => {
+    try { const url = new URL(decodeEntities(String(value)).replace(/&amp;/gi, '&'), base);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.href.length > 1500) return null;
+      if (!url.hostname.includes('.') || /(^|\.)(localhost|local|internal|lan)$/.test(url.hostname)) return null;
+      if (isIP(url.hostname.replace(/^\[|\]$/g, '')) && !isPublicAddress(url.hostname)) return null;
+      return url.href;
+    } catch { return null; }
+  };
+  const add = (key, value, source) => {
+    const text = plain(value);
+    if (text && info[key].length < 12 && !info[key].some(item => item.value === text)) info[key].push({ value: text, source });
+  };
+  const addLink = (key, value, label, source) => {
+    const url = publicLink(value, source);
+    if (url && info[key].length < 20 && !info[key].some(item => item.url === url)) info[key].push({ label: plain(label) || new URL(url).hostname, url, source });
+  };
+  const social = url => {
+    try { const host = new URL(url).hostname.replace(/^www\./, '');
+      return [['Instagram', /(^|\.)instagram\.com$/], ['Facebook', /(^|\.)facebook\.com$/], ['LinkedIn', /(^|\.)linkedin\.com$/],
+        ['TikTok', /(^|\.)tiktok\.com$/], ['YouTube', /(^|\.)(youtube\.com|youtu\.be)$/], ['X / Twitter', /(^|\.)(twitter\.com|x\.com)$/],
+        ['WhatsApp', /(^|\.)(wa\.me|whatsapp\.com)$/]].find(([, re]) => re.test(host))?.[0] ?? null;
+    } catch { return null; }
+  };
+  const business = type => /^(Organization|LocalBusiness|Restaurant|CafeOrCoffeeShop|Bakery|BarOrPub|Hotel|HairSalon|BeautySalon|ExerciseGym|SportsActivityLocation|Dentist|ProfessionalService|AutoRepair)$|(?:Business|Store)$/.test(type);
+  for (const page of pages.slice(0, 4)) {
+    const source = publicLink(page.finalUrl ?? page.url);
+    if (!source || typeof page.html !== 'string') continue;
+    const html = page.html.slice(0, MAX_BYTES), host = new URL(source).hostname, country = paysDuSite(place, host);
+    info.pages.push({ url: source, titre: plain(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').slice(0, 120) });
+    add('sites', info.pages[0].url, source);
+    const email = value => { for (const address of findEmails('mailto:' + String(value ?? '').replace(/^mailto:/i, ''), host)) add('emails', address, source); };
+    const phone = value => { try { const parsed = normaliserTelephone(decodeURIComponent(String(value ?? '').replace(/^tel:/i, '')), country); if (parsed) add('telephones', parsed, source); } catch {} };
+    for (const address of findEmails(html, host)) add('emails', address, source);
+    for (const number of findPhones(html, country)) add('telephones', number, source);
+    for (const link of links(html, source).slice(0, 1000)) {
+      const url = publicLink(link.url, source), label = url && social(url);
+      if (label) addLink('reseaux', url, label, source);
+      if (estPageUtile(link) || /services?|prestat|diensten|aanbod|tarif|prix|prijzen|pricing|horaires|opening|heures|menu|menukaart|livraison|delivery|afhalen/i.test(link.url + ' ' + link.text)) addLink('liens', link.url, link.text, source);
+    }
+    for (const match of html.matchAll(/<address\b[^>]*>([\s\S]*?)<\/address>/gi)) add('adresse', match[1], source);
+    // Structured business data only; employee/person records and arbitrary scripts are ignored.
+    let budget = 300;
+    const walk = (node, depth = 0) => {
+      if (!node || typeof node !== 'object' || depth > 8 || budget-- <= 0) return;
+      if (Array.isArray(node)) { for (const item of node.slice(0, 100)) walk(item, depth + 1); return; }
+      const types = [].concat(node['@type'] ?? []).filter(type => typeof type === 'string').map(type => type.split(/[\/#]/).at(-1));
+      const isBusiness = types.some(business) && !types.includes('Person');
+      if (isBusiness) {
+        const declared = typeof node.url === 'string' ? publicLink(node.url, source) : null;
+        if (!declared || new URL(declared).hostname.replace(/^www\./, '') === host.replace(/^www\./, '')) {
+          for (const value of [].concat(node.email ?? [])) email(value);
+          for (const value of [].concat(node.telephone ?? [])) phone(value);
+          for (const contact of [].concat(node.contactPoint ?? [])) if (contact && typeof contact === 'object') {
+            for (const value of [].concat(contact.email ?? [])) email(value);
+            for (const value of [].concat(contact.telephone ?? [])) phone(value);
+          }
+          for (const address of [].concat(node.address ?? [])) add('adresse', typeof address === 'string' ? address
+            : address && typeof address === 'object' ? [address.streetAddress, address.postalCode, address.addressLocality, address.addressRegion, typeof address.addressCountry === 'object' ? address.addressCountry?.name : address.addressCountry].map(plain).filter(Boolean).join(', ') : '', source);
+          for (const hours of [].concat(node.openingHours ?? [])) add('horaires', hours, source);
+          for (const hours of [].concat(node.openingHoursSpecification ?? [])) if (hours && typeof hours === 'object') {
+            const days = [].concat(hours.dayOfWeek ?? []).filter(value => typeof value === 'string').map(value => value.split('/').at(-1)).join(', ');
+            if (days && hours.opens && hours.closes) add('horaires', `${days} ${plain(hours.opens)}–${plain(hours.closes)}`, source);
+          }
+          for (const url of [].concat(node.sameAs ?? [])) { const label = social(url); if (label) addLink('reseaux', url, label, source); }
+          for (const service of [].concat(node.availableService ?? [], node.hasOfferCatalog?.itemListElement ?? [], node.makesOffer ?? [])) add('services', typeof service === 'string' ? service : service?.itemOffered?.name ?? service?.name, source);
+          for (const field of ['menu', 'hasMenu', 'acceptsReservations']) if (typeof node[field] === 'string') addLink('liens', node[field], field, source);
+        }
+      }
+      for (const [key, value] of Object.entries(node)) if (key !== 'employee' && key !== 'employees' && key !== 'founder' && value && typeof value === 'object') walk(value, depth + 1);
+    };
+    for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
+      if (attr(match[1], 'type').toLowerCase() !== 'application/ld+json' || match[2].length > 120000) continue;
+      try { walk(JSON.parse(match[2])); } catch { /* broken structured data does not invalidate the page */ }
+    }
+    // Microdata: retain public business properties, excluding nested Person scopes.
+    const microHtml = html.replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+    const lowerHtml = microHtml.toLowerCase();
+    const stack = []; let tokens = 0;
+    for (const match of microHtml.matchAll(/<\/?([a-z][\w:-]*)\b([^>]*)>/gi)) {
+      if (++tokens > 10000) break;
+      const tag = match[1].toLowerCase();
+      if (match[0][1] === '/') { const index = stack.findLastIndex(item => item.tag === tag); if (index >= 0) stack.length = index; continue; }
+      const type = attr(match[2], 'itemtype').split(/[\/#]/).at(-1), inherited = stack.at(-1)?.context ?? null;
+      const context = type === 'Person' ? 'person' : business(type) ? 'business' : inherited;
+      const properties = attr(match[2], 'itemprop').split(/\s+/);
+      if (context !== 'person') {
+        const end = lowerHtml.indexOf('</' + tag, match.index + match[0].length);
+        const text = end >= 0 ? microHtml.slice(match.index + match[0].length, Math.min(end, match.index + match[0].length + 2000)) : '';
+        const value = attr(match[2], 'content') || attr(match[2], 'href') || attr(match[2], 'datetime') || text;
+        if (properties.includes('email')) email(plain(value));
+        if (properties.includes('telephone')) phone(plain(value));
+        if (properties.includes('address') || type === 'PostalAddress') add('adresse', text || value, source);
+        if (properties.includes('openingHours')) add('horaires', value, source);
+        if (properties.includes('availableService')) add('services', value, source);
+      }
+      if (!/^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag) && !/\/\s*>$/.test(match[0])) stack.push({ tag, context });
+    }
+  }
+  return info;
+}
+
 /** Lit un site. `onStep(texte)` raconte ce que le lecteur fait, page par page. */
 export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
   if (!place.website) return { ok: false, raison: 'pas de site', signals: { site: false }, emails: [], excerpt: '' };
@@ -228,7 +336,7 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
     if (seen.has(l.url)) continue;
     seen.add(l.url);
     onStep?.(`Je lis ${new URL(l.url).pathname}`);
-    try { pages.push({ url: l.url, ...(await getHtml(l.url, { resolver, fetchImpl })) }); } catch {}
+    try { const page = await getHtml(l.url, { resolver, fetchImpl }); pages.push({ url: page.finalUrl, html: page.html }); } catch {}
   }
 
   const all = pages.map((p) => p.html).join('\n');
@@ -249,7 +357,9 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
     pages_lues: pages.map((p) => new URL(p.url).pathname),
     ...langueDuSite(home.html),
   };
-  const emails = findEmails(all, host);
+  const info = informationsPubliques(pages, place);
+  signals.info = info;
+  const emails = [...new Set([...findEmails(all, host), ...info.emails.map(item => item.value)])];
   // L'adresse renseignée sur la carte (OpenStreetMap) compte aussi, si c'est bien celle du commerce.
   const osm = place.email_osm?.toLowerCase().trim();
   if (osm && !emails.includes(osm) && findEmails(`mailto:${osm}`, host).length) emails.push(osm);
@@ -257,9 +367,10 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
   let email_source = null;
   if (emails[0]) {
     const page = pages.find((p) => findEmails(p.html, host).includes(emails[0]));
-    email_source = page ? new URL(page.url).pathname : emails[0] === osm ? 'OpenStreetMap' : null;
+    const structured = info.emails.find(item => item.value === emails[0]);
+    email_source = page ? new URL(page.url).pathname : structured ? new URL(structured.source).pathname : emails[0] === osm ? 'OpenStreetMap' : null;
   }
-  const telephones = findPhones(all, paysDuSite(place, host));
+  const telephones = [...new Set([...findPhones(all, paysDuSite(place, host)), ...info.telephones.map(item => item.value)])].slice(0, 3);
   onStep?.(emails.length ? `Adresse trouvée : ${emails[0]}` : 'Aucune adresse de contact affichée');
   if (telephones.length) onStep?.(`Téléphone trouvé : ${telephones[0]}`);
   return { ok: true, signals, emails, email_source, telephones, excerpt: text.slice(0, 1500) };

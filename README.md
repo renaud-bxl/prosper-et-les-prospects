@@ -53,13 +53,25 @@ curl -fsSL https://raw.githubusercontent.com/renaud-bxl/prosper-et-les-prospects
 
 1. Choisissez la langue de l’interface et le thème clair/nuit.
 2. Cherchez une ville en Belgique, aux Pays-Bas ou au Luxembourg. Les variantes de noms sont reconnues, comme Bruxelles/Brussel et Anvers/Antwerpen.
-3. Sélectionnez un métier, un rayon et un nombre de commerces. Commencez par cinq.
+3. Sélectionnez un métier, un rayon de départ et un objectif de contacts qualifiés. Commencez par cinq. Le nombre de commerces à visiter peut être supérieur à cet objectif.
 4. Choisissez **Lecture seule**, **Claude Code** ou **Codex**. Pour les mails, renseignez votre offre et votre signature. La langue des mails est indépendante de celle de l’interface ; le mode automatique suit la langue déclarée par le site, sinon le français.
 5. Lancez la mission. Le scout découvre les commerces ; les lecteurs empruntent les rues et entrent dans les bâtiments. Cliquez sur un commerce pour consulter contacts, observations et score.
-6. À la fin, la fenêtre de résultats s’ouvre sur toute la surface disponible. Les clients potentiels, leurs contacts et leurs brouillons y sont réunis. En mode analyse seule, renseignez votre offre et votre signature dans cette fenêtre puis préparez les mails manquants, sans relancer la recherche.
+6. La fenêtre de résultats réunit une carte, tous les commerces repérés et tous les mails préparés. Les commerces écartés, non lus ou sans coordonnées restent consultables. Chaque mail peut être corrigé, validé, refusé ou copié. En mode analyse seule ou après une préparation partielle, renseignez votre offre et préparez uniquement les mails manquants, sans refaire la recherche.
 7. Relisez et corrigez chaque brouillon, puis validez ou refusez. L’envoi éventuel se fait depuis votre messagerie.
 
 Les sites publics peuvent être incomplets ou inaccessibles. Les signaux sont des observations automatiques, à vérifier avant usage : l’absence d’un module détecté ne prouve pas l’absence du service. Les commerces sans contact public peuvent être écartés. Les données cartographiques dépendent d’OpenStreetMap et des services de tuiles publics.
+
+## Objectifs, reprise et informations — 1.0.3
+
+Un **objectif de contacts qualifiés** ne compte pas les commerces simplement repérés : il faut une adresse de contact relevée et un score suffisant. Avec un assistant actif, l’objectif de mails compte les brouillons réellement préparés. La recherche peut donc examiner davantage de commerces et élargir le rayon de départ, avec des bornes de **250 commerces** et **20 km**. Les compteurs distinguent commerces repérés, examinés, contacts retenus et mails préparés.
+
+Ces objectifs ne sont pas une garantie : des contacts peuvent être absents, des sites inaccessibles ou les sources épuisées. Le bilan indique si l’objectif est atteint et la raison d’un arrêt anticipé : zone parcourue, limite de recherche, source indisponible ou rédaction bloquée. Une mission partielle conserve les commerces, leurs coordonnées, leurs informations et les mails déjà écrits.
+
+Un délai local de rédaction déclenche **une seule reprise automatique**, avec **90 secondes puis 180 secondes par défaut**. Les autres erreurs de connexion, de configuration ou de sortie refusée demandent une vérification ; elles ne provoquent pas cette reprise automatique. Les erreurs restent associées au commerce concerné. **Préparer les mails manquants** reprend les fiches éligibles déjà enregistrées et conserve les brouillons existants ; cela ne crée pas les contacts absents et ne garantit pas d’atteindre le quota initial.
+
+La **langue des mails** est indépendante de l’interface. Un choix explicite français, néerlandais ou anglais est prioritaire. En automatique, Prosper suit uniquement la langue déclarée dans `<html lang>` de la page d’accueil reçue ; si elle est absente ou hors FR/NL/EN, le français est utilisé. Le pays, la ville et le suffixe du domaine ne décident pas de cette langue. Chaque nouveau mail conserve la langue demandée au moteur et son origine : choix manuel, site ou défaut. Pour un ancien brouillon sans ces métadonnées, la provenance reste inconnue. Cette indication ne constitue pas une détection linguistique après une modification manuelle du texte.
+
+Les fiches conservent aussi les **informations publiques sourcées** trouvées sur les pages lues : sites, adresses, téléphones, e-mails, horaires, réseaux sociaux, services mentionnés et liens utiles. Le lecteur exploite le HTML et les données structurées JSON-LD ou microdata, dans la limite des quatre pages déjà prévues, sans nouvelle visite pour cet enrichissement. Chaque information affichée renvoie à sa page source. Une donnée absente n’est ni inventée ni assimilée à l’absence du service.
 
 ## Claude Code, Codex et Cursor
 
@@ -91,7 +103,7 @@ Pour publier une modification destinée aux installations existantes, testez et 
 ## Données et configuration
 
 - `config.json` : votre offre et les derniers réglages, créé depuis `config.example.json` au premier démarrage.
-- `data/agents.db` : missions, contacts, scores, brouillons et décisions dans une base SQLite locale.
+- `data/agents.db` : missions, contacts, informations sourcées, scores, brouillons, langue de rédaction et décisions dans une base SQLite locale. La migration ajoute les champs manquants sans réécrire les anciens mails.
 - `data/overpass` et `data/tuiles` : cache des réponses publiques.
 - `.env` : seulement la clé Google Maps facultative si vous choisissez cette intégration ; modèle fourni dans `.env.example`.
 

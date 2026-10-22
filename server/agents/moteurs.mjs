@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join, delimiter } from 'node:path';
 import { existsSync, accessSync, constants, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { RedactionError, avecRepriseRedaction } from '../redaction-recovery.mjs';
 
 export const SCHEMA_BROUILLON = {
   type: 'object',
@@ -71,26 +72,26 @@ export function commandeRedaction(system, config, schemaPath) {
 export function validerBrouillon(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || ['constat', 'objet', 'mail'].some((key) => typeof value[key] !== 'string' || !value[key].trim())) {
-    throw new Error('Le moteur n’a pas rendu un brouillon JSON complet (constat, objet, mail).');
+    throw new RedactionError('invalid_draft', 'Le moteur n’a pas rendu un brouillon JSON complet (constat, objet, mail).');
   }
-  if (value.constat.length > 2000 || value.objet.length > 300 || value.mail.length > 12000) throw new Error('Brouillon trop long : sortie du moteur refusée.');
+  if (value.constat.length > 2000 || value.objet.length > 300 || value.mail.length > 12000) throw new RedactionError('invalid_draft', 'Brouillon trop long : sortie du moteur refusée.');
   return Object.fromEntries(['constat', 'objet', 'mail'].map((key) => [key, value[key].trim()]));
 }
 
 export function lireSortieMoteur(moteur, output) {
   if (moteur === 'claude') {
     const result = JSON.parse(output);
-    if (result.is_error) throw new Error('Claude Code a signalé une erreur de rédaction. Vérifiez la connexion et le modèle choisi.');
+    if (result.is_error) throw new RedactionError('engine_reported_error', 'Claude Code a signalé une erreur de rédaction. Vérifiez la connexion et le modèle choisi.');
     return validerBrouillon(result.structured_output ?? JSON.parse(result.result));
   }
   const events = output.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-  if (events.some((event) => event.type === 'error' || event.type === 'turn.failed')) throw new Error('Codex a interrompu la rédaction. Vérifiez la connexion ChatGPT et le modèle choisi.');
+  if (events.some((event) => event.type === 'error' || event.type === 'turn.failed')) throw new RedactionError('engine_reported_error', 'Codex a interrompu la rédaction. Vérifiez la connexion ChatGPT et le modèle choisi.');
   // Les versions CLI peuvent exposer quelques outils internes malgré les options ci-dessus.
   // Un événement d'action n'est jamais accepté comme source d'un brouillon.
   const safeItems = new Set(['agent_message', 'reasoning']);
-  if (events.some((event) => event.item && !safeItems.has(event.item.type))) throw new Error('Rédaction interrompue : le moteur a tenté d’utiliser un outil.');
+  if (events.some((event) => event.item && !safeItems.has(event.item.type))) throw new RedactionError('tool_use_blocked', 'Rédaction interrompue : le moteur a tenté d’utiliser un outil.');
   const last = events.filter((event) => event.type === 'item.completed' && event.item?.type === 'agent_message').at(-1);
-  if (!last || !events.some((event) => event.type === 'turn.completed')) throw new Error('Codex n’a pas terminé son brouillon.');
+  if (!last || !events.some((event) => event.type === 'turn.completed')) throw new RedactionError('incomplete_output', 'Codex n’a pas terminé son brouillon.');
   return validerBrouillon(JSON.parse(last.item.text));
 }
 
@@ -101,7 +102,7 @@ function envSansCleApi() {
   return env;
 }
 
-export async function executerRedaction(system, prompt, config = {}) {
+async function executerUneRedaction(system, prompt, config = {}) {
   const { moteur, timeoutMs } = normaliserRedaction(config);
   if (moteur === 'aucun') throw new Error('La rédaction est désactivée.');
   const cwd = mkdtempSync(join(tmpdir(), 'oscar-redacteur-'));
@@ -112,7 +113,7 @@ export async function executerRedaction(system, prompt, config = {}) {
   try {
     const output = await new Promise((resolve, reject) => {
       const child = spawn(binary, args, { cwd, env: envSansCleApi(), stdio: ['pipe', 'pipe', 'pipe'], shell: false });
-      let out = '', size = 0, settled = false, killer;
+      let out = '', size = 0, settled = false, killer, stoppingError = null;
       const finish = (error, value) => {
         if (settled) return;
         settled = true;
@@ -120,35 +121,50 @@ export async function executerRedaction(system, prompt, config = {}) {
         if (error) reject(error); else resolve(value);
       };
       const stop = (error) => {
-        if (settled) return;
+        if (settled || stoppingError) return;
+        stoppingError = error;
+        clearTimeout(timer);
         child.kill('SIGTERM');
         killer = setTimeout(() => child.kill('SIGKILL'), 1000);
         killer.unref();
-        finish(error);
       };
-      const timer = setTimeout(() => stop(new Error(`${moteur === 'claude' ? 'Claude Code' : 'Codex'} : délai de rédaction dépassé (${timeoutMs / 1000} s).`)), timeoutMs);
+      const timer = setTimeout(() => stop(new RedactionError('redaction_timeout', `${moteur === 'claude' ? 'Claude Code' : 'Codex'} : délai de rédaction dépassé (${timeoutMs / 1000} s).`, { retryable: true })), timeoutMs);
       child.stdout.on('data', (chunk) => {
         size += chunk.length;
-        if (size > 1_000_000) return stop(new Error('Sortie du moteur trop volumineuse.'));
+        if (size > 1_000_000) return stop(new RedactionError('output_too_large', 'Sortie du moteur trop volumineuse.'));
         out += chunk;
       });
       // Le texte brut de stderr peut contenir des données du site ou des détails d'authentification.
-      child.stderr.on('data', (chunk) => { size += chunk.length; if (size > 1_000_000) stop(new Error('Sortie du moteur trop volumineuse.')); });
+      child.stderr.on('data', (chunk) => { size += chunk.length; if (size > 1_000_000) stop(new RedactionError('output_too_large', 'Sortie du moteur trop volumineuse.')); });
       child.stdin.on('error', () => {}); // Le processus peut refuser sa configuration avant la lecture du prompt.
-      child.on('error', (error) => finish(new Error(error.code === 'ENOENT'
+      child.on('error', (error) => finish(new RedactionError(error.code === 'ENOENT' ? 'engine_missing' : 'engine_start_failed', error.code === 'ENOENT'
         ? `${moteur === 'claude' ? 'Claude Code' : 'Codex CLI'} introuvable. Installez-le et connectez votre abonnement, puis relancez.`
         : `Impossible de démarrer ${moteur} (${error.code ?? 'erreur système'}).`)));
+      child.on('exit', () => {
+        if (!stoppingError) return;
+        clearTimeout(killer);
+        child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
+        finish(stoppingError); // La reprise ne peut commencer qu'après la sortie effective de ce CLI.
+      });
       child.on('close', (code, signal) => {
         clearTimeout(killer);
-        if (code !== 0) return finish(new Error(`${moteur === 'claude' ? 'Claude Code' : 'Codex'} a échoué (${signal ?? `code ${code}`}). Vérifiez la version du CLI, sa connexion et le modèle choisi. Aucun brouillon créé.`));
+        if (stoppingError) return finish(stoppingError);
+        if (code !== 0) return finish(new RedactionError('engine_exit_failed', `${moteur === 'claude' ? 'Claude Code' : 'Codex'} a échoué (${signal ?? `code ${code}`}). Vérifiez la version du CLI, sa connexion et le modèle choisi. Aucun brouillon créé.`));
         finish(null, out);
       });
       child.stdin.end(prompt);
     });
     try { return { ...lireSortieMoteur(moteur, output), duree_ms: Date.now() - debut, moteur }; }
     catch (error) {
-      if (error instanceof SyntaxError) throw new Error(`${moteur} a rendu une sortie JSON invalide. Aucun brouillon créé.`);
+      if (error instanceof SyntaxError) throw new RedactionError('invalid_json', `${moteur} a rendu une sortie JSON invalide. Aucun brouillon créé.`);
       throw error;
     }
   } finally { rmSync(cwd, { recursive: true, force: true }); }
+}
+
+export async function executerRedaction(system, prompt, config = {}) {
+  const { timeoutMs } = normaliserRedaction(config);
+  const debut = Date.now();
+  const result = await avecRepriseRedaction(({ timeoutMs: limit }) => executerUneRedaction(system, prompt, { ...config, timeout_ms: limit }), { timeoutMs, onRetry: config.onRetry });
+  return { ...result, duree_ms: Date.now() - debut };
 }

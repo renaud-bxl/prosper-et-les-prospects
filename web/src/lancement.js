@@ -39,7 +39,7 @@ export function createLancement(root, { config, onLaunch, onSearch, onReplay }) 
     <section class="l-row"><div><h3>${l('area')}</h3><div class="chips" id="l-rayon">${[1000, 2000, 3000, 4000].map((r) => `<button type="button" data-v="${r}">${r / 1000} km</button>`).join('')}</div></div></section>
     <section><h3>${l('count')} <b id="l-n"></b></h3><input type="range" id="l-nombre" min="5" max="60" step="5"><p class="l-hint">${l('expand')}</p></section>
     <section><h3>${l('contacts')}</h3><div class="chips toggles" id="l-veut"><button type="button" data-k="emails">${l('emails')}</button><button type="button" data-k="telephones">${l('phones')}</button></div></section>
-    <section><h3>${l('drafts')} <b id="l-o"></b></h3><input type="range" id="l-objectif" min="0" max="30" step="1"><p class="l-hint">${l('stop')}</p></section>
+    <section><h3>${l('drafts')} <b id="l-o"></b></h3><input type="range" id="l-objectif" min="0" max="60" step="1"><p class="l-hint">${l('stop')}</p></section>
     <details class="l-box" open><summary>${l('offer')}</summary>
       <label>${l('sell')}</label><textarea id="l-vend" rows="3"></textarea>
       <label>${l('forWhom')}</label><input id="l-pourqui" class="l-input">
@@ -128,7 +128,7 @@ export function createLancement(root, { config, onLaunch, onSearch, onReplay }) 
     $('l-n').textContent = st.nombre;
     $('l-objectif').max = String(st.nombre);
     if (st.objectif > st.nombre) st.objectif = st.nombre;
-    $('l-o').textContent = st.objectif ? st.objectif : l('all');
+    $('l-o').textContent = st.objectif ? st.objectif : `${st.nombre} · ${l('all')}`;
     const i = METIERS.findIndex(([,v])=>v===st.metier);
     const label = i<0 ? st.metier : businessLabels[getLang()][i].toLowerCase();
     const cap = capabilities[st.redaction.moteur];
@@ -137,7 +137,7 @@ export function createLancement(root, { config, onLaunch, onSearch, onReplay }) 
     $('l-objectif').disabled = st.redaction.moteur==='aucun';
     if(st.redaction.moteur==='aucun') $('l-o').textContent=l('collect');
     $('l-recap').innerHTML = st.ville
-      ? `<b>${st.nombre} ${esc(label)}</b> ${l('around')} <b>${esc(st.ville.name)}</b> (${st.rayon / 1000} km) · ${[st.veut.emails && l('emails'), st.veut.telephones && l('phones')].filter(Boolean).join(' · ')} · ${st.redaction.moteur==='aucun' ? l('scanOnly') : st.objectif ? `${st.objectif} ${l('maxMail')}` : l('perLead')}`
+      ? `<b>${st.nombre} ${esc(label)}</b> ${l('around')} <b>${esc(st.ville.name)}</b> (${st.rayon / 1000} km) · ${[st.veut.emails && l('emails'), st.veut.telephones && l('phones')].filter(Boolean).join(' · ')} · ${st.redaction.moteur==='aucun' ? l('scanOnly') : `${st.objectif || st.nombre} ${l('maxMail')}`}`
       : l('selectFirst');
     $('l-go').disabled = !st.ville || !st.metier;
   }

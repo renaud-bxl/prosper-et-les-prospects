@@ -278,9 +278,10 @@ function connect() {
     if (liveRun && e.run_id === liveRun) {
       deliver(e);
       const status=$('mission-status');
-      if(e.type==='error') {status.hidden=false;status.className='error';status.textContent=t(e.data?.message ?? l('failed'));}
+      if(e.type==='error' && !e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='error';status.textContent=t(e.data?.message ?? l('failed'));}
+      if(e.type==='retry' && e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='';status.textContent=l('retryingDraft');}
       if(e.agent==='chef' && e.type==='drafts:start' && world) world.writeGo=true;
-      if(e.agent==='chef' && e.type==='end') {results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':'done';status.textContent=l(e.data?.erreur?'failed':'completed');}
+      if(e.agent==='chef' && e.type==='end') {results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':e.data?.partiel?'partial':'done';status.textContent=l(e.data?.erreur?'failed':e.data?.partiel?'partial':'completed');}
     }
   };
 }
@@ -430,7 +431,7 @@ async function boot() {
   const st = await fetch('/api/state').then((r) => r.json()).catch(() => ({}));
   config = st.config ?? {};
   latestResultRun=st.run?.id??null;
-  const showingResults=!CINE && st.run && !st.running && ['fini','erreur'].includes(st.run.status) ? await results.autoOpen(asked ?? st.run.id).catch(()=>false) : false;
+  const showingResults=!CINE && st.run && !st.running && ['fini','partiel','erreur'].includes(st.run.status) ? await results.autoOpen(asked ?? st.run.id).catch(()=>false) : false;
   lanc = createLancement($('launch'), {
     config,
     onLaunch: launch,

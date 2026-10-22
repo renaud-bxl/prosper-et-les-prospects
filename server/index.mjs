@@ -5,13 +5,14 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync, renameSync } from '
 import { join, extname } from 'node:path';
 import { ROOT, loadConfig, GOOGLE_KEY } from './env.mjs';
 import { lastRun, getRun, listRuns, listPlaces, listEvents, getPlace, updatePlace } from './db.mjs';
-import { bus, lancer, decider, isRunning, isDraftRunning, visiter, lancerBrouillons, statutBrouillons } from './chef.mjs';
+import { bus, lancer, decider, isRunning, isDraftRunning, visiter, lancerBrouillons, statutBrouillons, resumeMission } from './chef.mjs';
 import { localiser } from './agents/eclaireur.mjs';
 import { villeOSM } from './agents/carte.mjs';
 import { capacitesMoteurs } from './agents/moteurs.mjs';
 import { getUpdateStatus, startUpdate, isUpdating } from './updates.mjs';
 import { validateMission, countryAt } from './benelux.mjs';
 import { ficheGoogle } from './agents/google.mjs';
+import { verifierDisponibiliteMission } from './mission-pipeline.mjs';
 
 const PORT = Number(process.env.PORT ?? 5577);
 const DEV = process.argv.includes('--dev');
@@ -29,7 +30,7 @@ async function readBody(req) {
 
 function snapshot(runId) {
   const run = runId ? getRun(runId) : lastRun();
-  return { run, running: isRunning(), places: run ? listPlaces(run.id) : [], draftJob: run ? statutBrouillons(run.id) : null, config: publicConfig() };
+  return { run, running: isRunning(), places: run ? listPlaces(run.id) : [], draftJob: run ? statutBrouillons(run.id) : null, summary: run ? resumeMission(run.id) : null, config: publicConfig() };
 }
 
 function publicConfig() {
@@ -102,7 +103,7 @@ async function api(req, res, url) {
     const body = await readBody(req);
     const config = loadConfig();
     try {
-      if (isRunning()) throw new Error('Une mission est déjà en cours.');
+      verifierDisponibiliteMission({ running: isRunning(), updating: isUpdating() });
       const cc = validateMission(body,config);
       if (body.metier) config.recherche.metier = String(body.metier).slice(0, 60);
       if (body.centre && Number.isFinite(+body.centre.lat) && Number.isFinite(+body.centre.lon)) {
@@ -123,11 +124,13 @@ async function api(req, res, url) {
       }
       if (body.redaction) config.redaction = {moteur:body.redaction.moteur, modele:String(body.redaction.modele ?? '').slice(0,80), langue:body.redaction.langue ?? 'auto'};
       if (typeof body.consignes === 'string') config.consignes = body.consignes.slice(0, 800);
+      // Relire le verrou après chaque attente et avant toute écriture de configuration.
+      verifierDisponibiliteMission({ running: isRunning(), updating: isUpdating() });
       // La dernière mission devient celle par défaut (la carte se centre sur cette ville au prochain chargement).
       writeFileSync(join(ROOT, 'config.json.tmp'), JSON.stringify(config, null, 2) + '\n');
       renameSync(join(ROOT,'config.json.tmp'),join(ROOT,'config.json'));
       return json(res, 200, { runId: await lancer(config) });
-    } catch (e) { return json(res, 409, { error: e.message }); }
+    } catch (e) { return json(res, 409, { code: e.code ?? 'invalid_request', error: e.message }); }
   }
 
   // Un commerce cliqué sur la carte du QG : un lecteur va le voir (les gestes arrivent dans le flux en direct).

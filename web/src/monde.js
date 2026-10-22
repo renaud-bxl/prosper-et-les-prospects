@@ -129,6 +129,7 @@ export class Monde {
       this.actors.set(id, a);
     }
     this.mission = null;
+    this.progress = null;
     this.scan = null;
     this.introDone = false;
     this.timers = [];
@@ -218,6 +219,7 @@ export class Monde {
       this.reset();
       this.mission = { ...e.data };
     }
+    if(e.agent==='chef' && ['progress','end'].includes(e.type) && e.data?.objectif_contacts){this.progress={...e.data};this.emit('progress',this.progress);if(e.type==='progress')return;}
     if(e.agent==='chef' && e.type==='decision' && e.place_id) {
       const q=this.places.get(e.place_id); if(q){ q.savedDecision={...e.data}; if(q.mail) {Object.assign(q,{objet:e.data.objet ?? q.objet,mail:e.data.mail ?? q.mail});this.setState(q,e.data.decision);} }
       return;
@@ -248,7 +250,7 @@ export class Monde {
       }
       if (e.type === 'end') {
         a.do({ t: 'until', fn: () => [...this.actors.values()].every((b) => b === a || (!b.busy && !b.lane.length)) },
-          { t: 'call', fn: () => { this.emit('end', d); a.say(tr("Mission terminée : {nombre} mails t'attendent.", { nombre: d.ecrits ?? 0 }), 4200, 'chef', 3); a.status = tr('Mission terminée'); for (const b of this.actors.values()) b.cheerUntil = this.time + 2.6; } },
+          { t: 'call', fn: () => { this.emit('end', d); a.say(tr(d.partiel||d.erreur?"Résultats conservés : {nombre} mails prêts.":"Mission terminée : {nombre} mails t'attendent.", { nombre: d.ecrits ?? 0 }), 4200, 'chef', 3); a.status = tr(d.partiel||d.erreur?'Objectif incomplet':'Mission terminée'); for (const b of this.actors.values()) b.cheerUntil = this.time + 2.6; } },
           { t: 'wait', ms: 2600, pose: 'cheer', dir: 'down' });
       }
       return;
@@ -275,15 +277,15 @@ export class Monde {
             W.emit('found', q);
           } });
       }
-      if (e.type === 'error') a.do({ t: 'call', fn: () => { this.teamSent = true; if (this.scan) this.scan.end = this.time; a.say(tr('La carte ne répond pas…'), 1800, 'bad', 3); } });
+      if (e.type === 'error') a.do({ t: 'call', fn: () => { this.teamSent = true; if (this.scan) this.scan.end = this.time; a.say(tr('La source des commerces ne répond pas…'), 1800, 'bad', 3); } });
       if (e.type === 'done') {
         a.do({ t: 'call', fn: () => {
             const n = d.trouves ?? this.order.length;
-            a.say(d.demandes && n < d.demandes ? tr("{nombre} sur {demandes} : la zone n'en a pas plus.", { nombre: n, demandes: d.demandes }) : tr('{nombre} sur la carte !', { nombre: n }), 2000, 'good', 3);
+            a.say(!d.objectif_contacts && d.demandes && n < d.demandes ? tr("{nombre} sur {demandes} : la zone n'en a pas plus.", { nombre: n, demandes: d.demandes }) : tr('{nombre} sur la carte !', { nombre: n }), 2000, 'good', 3);
             a.status = tr('Rentre au QG');
             if (this.scan) this.scan.end = this.time;
             if (this.mission) Object.assign(this.mission, { trouves: n, demandes: d.demandes ?? this.mission.nombre, rayon: d.rayon ?? this.mission.rayon });
-            this.emit('scouted', { trouves: n, demandes: d.demandes, rayon: d.rayon });
+            this.emit('scouted', { ...d, trouves: n });
           } },
           { t: 'wait', ms: 700, pose: 'stand' },
           { t: 'go', to: a.home, dur: 0.9 },
@@ -365,6 +367,7 @@ export class Monde {
           W.emit('mail', { a, q, d });
         } }, { t: 'wait', ms: 900, pose: 'stand', dir: 'down' });
       }
+      if (e.type === 'retry') a.do({ t: 'call', fn: () => { a.status=tr('Reprise de la rédaction…'); a.say(tr('Reprise de la rédaction…'),1800,'',1); } });
       if (e.type === 'error') a.do({ t: 'call', fn: () => { W.setState(q, 'retenu'); a.target = null; } });
     }
   }

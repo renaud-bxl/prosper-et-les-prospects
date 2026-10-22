@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createDraftSessions, normaliserDemandeBrouillons, lectureEnregistree, candidatBrouillon } from '../server/redaction-session.mjs';
 import { rediger as redigerAvecCli } from '../server/agents/redacteur.mjs';
+import { bilanMission } from '../server/redaction-recovery.mjs';
 
 const draft = { constat: 'Observation enregistrée.', objet: 'Un échange utile', mail: 'Notre offre de test. Un bref échange ?\nSignature de test' };
 const offer = { ce_que_je_vends: 'notre offre de test', pour_qui: 'Commerces de test', signature: 'Signature de test', site: 'https://example.invalid' };
@@ -31,6 +32,8 @@ function fixture(rows, options = {}) {
     loadConfig: () => structuredClone(config),
     saveConfig: (value) => { config = structuredClone(value); saved.push(structuredClone(value)); },
     isMissionRunning: () => Boolean(options.missionActive), isUpdating: () => Boolean(options.updateActive),
+    onCompleted: (runId, job) => options.onCompleted?.(runId, job, places),
+    getTargets: () => options.targets ?? null,
   });
   return { service, places, events, calls, saved };
 }
@@ -173,4 +176,42 @@ test('bout en bout avec un vrai processus CLI de test : lecture enregistrée, of
     if (previous === undefined) delete process.env.CLAUDE_BIN; else process.env.CLAUDE_BIN = previous;
     rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test('reprise du seul mail manquant : dix brouillons conservés et bilan réparé fini', async () => {
+  let status = 'partiel';
+  const originals = Array.from({ length: 10 }, (_, i) => place(`saved-${i}`, { status: i === 0 ? 'valide' : 'en_attente', mail: `Brouillon conservé ${i}` }));
+  const pending = place('timeout', { status: 'erreur', signals: { site: true, redaction_error: { code: 'redaction_timeout', attempts: 2 } } });
+  const f = fixture([...originals, pending], {
+    rediger: async () => ({ ...draft, mail_langue: 'nl', mail_langue_source: 'site' }),
+    onCompleted: (_run, _job, rows) => { status = bilanMission({ erreurs_redaction: [...rows.values()].filter((row) => row.status === 'erreur').length }).status; },
+  });
+  f.service.start('run-test', request);
+  const job = await f.service.waitForJob('run-test');
+  assert.equal(job.total, 1); assert.equal(job.completed, 1); assert.equal(f.calls.length, 1); assert.equal(status, 'fini');
+  for (const original of originals) assert.deepEqual(f.places.get(original.id), original);
+  const repaired = f.places.get('timeout');
+  assert.equal(repaired.mail_langue, 'nl'); assert.equal(repaired.mail_langue_source, 'site'); assert.equal(repaired.signals.redaction_error, undefined);
+});
+
+test('une reprise respecte le quota historique et dédoublonne les destinataires publics', async () => {
+  const original = place('already', { status: 'valide', mail: 'Conservé', to_email: 'shared@example.invalid', emails: ['shared@example.invalid'] });
+  const f = fixture([original,
+    place('duplicate', { to_email: 'SHARED@example.invalid', emails: ['SHARED@example.invalid'] }),
+    place('alternative', { to_email: 'shared@example.invalid', emails: ['shared@example.invalid', 'local@example.invalid'] }),
+    place('spare')], { targets: { objectif_contacts: 2, objectif_mails: 2 } });
+  f.service.start('run-test', request);
+  const job = await f.service.waitForJob('run-test');
+  assert.equal(job.total, 1); assert.equal(job.objectif_mails, 2); assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0][1].emails[0], 'local@example.invalid'); assert.equal(f.places.get('alternative').to_email, 'local@example.invalid');
+  assert.deepEqual(f.places.get('already'), original); assert.equal(f.places.get('duplicate').mail, undefined); assert.equal(f.places.get('spare').mail, undefined);
+});
+
+test('une analyse seule devient un lot explicite, un quota déjà rempli ne relance aucun modèle', async () => {
+  const f = fixture([place('a'), place('b'), place('c')], { targets: { objectif_contacts: 2, objectif_mails: 0 } });
+  f.service.start('run-test', request);
+  const job = await f.service.waitForJob('run-test');
+  assert.equal(job.objectif_mails, 2); assert.equal(job.total, 2); assert.equal(f.calls.length, 2);
+  const complete = fixture([place('a', { mail: 'Préservé', status: 'en_attente' }), place('spare')], { targets: { objectif_contacts: 1, objectif_mails: 1 } });
+  assert.throws(() => complete.service.start('run-test', request), { code: 'no_candidates' }); assert.equal(complete.calls.length, 0);
 });

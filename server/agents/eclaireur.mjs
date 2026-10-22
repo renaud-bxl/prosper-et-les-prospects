@@ -1,5 +1,6 @@
 // L'éclaireur : trouve les commerces d'un métier dans une ville, avec l'API officielle Google Places (New).
 import { GOOGLE_KEY } from '../env.mjs';
+import { countryAt } from '../benelux.mjs';
 
 const FIELDS = [
   'places.id', 'places.displayName', 'places.formattedAddress', 'places.location', 'places.rating',
@@ -22,50 +23,76 @@ async function searchPage(body) {
   return data;
 }
 
-/**
- * Cherche jusqu'à `nombre` commerces (60 au plus : trois pages de 20, la limite de Google).
- * `onFound(place)` est appelé pour chaque commerce retenu, `onLog(texte)` pour raconter la recherche.
- */
-export async function eclairer({ metier, ville, centre, rayon_m, nombre, pays }, { onFound, onLog }) {
-  const body = {
-    textQuery: `${metier} ${ville}`,
-    languageCode: 'fr',
-    regionCode: pays ?? 'FR',
-    pageSize: 20,
-    ...(centre ? { locationBias: { circle: { center: { latitude: centre.lat, longitude: centre.lon }, radius: rayon_m ?? 3000 } } } : {}),
+const distance = (a, b) => {
+  const rad = Math.PI / 180, dlat = (b.lat - a.lat) * rad, dlon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dlat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dlon / 2) ** 2;
+  return 12742000 * Math.asin(Math.min(1, Math.sqrt(h)));
+};
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/** Up to six bounded search areas, each with at most three Google result pages. */
+export async function eclairer(
+  { metier, ville, centre, rayon_m = 2500, limite_scan = 250, rayon_max_m = 20000, pays, langue = 'fr' },
+  { onFound, onLog, exclure = CHAINES, shouldContinue = () => true, request = searchPage, wait = delay } = {},
+) {
+  const kept = [], ids = new Set(), names = new Map(), deferred = new Map();
+  const cap = Math.min(250, Math.max(1, Math.floor(Number(limite_scan) || 250)));
+  const maxRadius = Math.min(20000, Math.max(100, Number(rayon_max_m) || 20000));
+  const initial = Math.min(maxRadius, Math.max(100, Number(rayon_m) || 2500));
+  let rayon = initial, queries = 0, reason = 'radius_exhausted', sourceError = null;
+  const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const excluded = name => { if (!exclure) return false; exclure.lastIndex = 0; return exclure.test(name); };
+  const finish = () => Object.assign(kept, { rayon, queries, scanned: kept.length, exhausted: reason === 'radius_exhausted', reason, ...(sourceError ? { error: sourceError } : {}) });
+  const emit = async place => {
+    if (!await shouldContinue()) { reason = 'objective_reached'; return false; }
+    if (kept.length >= cap) { reason = 'scan_limit'; return false; }
+    const key = normalize(place.name);
+    if (ids.has(place.id) || (names.get(key) ?? []).some(p => distance(p, place) < 80)) return true;
+    ids.add(place.id); names.set(key, [...(names.get(key) ?? []), place]); kept.push(place);
+    if (await onFound?.(place) === false || !await shouldContinue()) { reason = 'objective_reached'; return false; }
+    if (kept.length >= cap) { reason = 'scan_limit'; return false; }
+    return true;
   };
-  const kept = [];
-  let pageToken;
-  for (let page = 1; page <= 3 && kept.length < nombre; page++) {
-    onLog?.(`Recherche « ${body.textQuery} » sur Google Maps, page ${page}`);
-    const data = await searchPage(pageToken ? { ...body, pageToken } : body);
-    for (const p of data.places ?? []) {
-      if (kept.length >= nombre) break;
-      const name = p.displayName?.text ?? '';
-      if (p.businessStatus && p.businessStatus !== 'OPERATIONAL') continue;
-      if (CHAINES.test(name)) { onLog?.(`${name} : une chaîne, je passe`); continue; }
-      const place = {
-        id: p.id,
-        name,
-        address: p.formattedAddress ?? '',
-        lat: p.location?.latitude,
-        lon: p.location?.longitude,
-        rating: p.rating ?? null,
-        reviews: p.userRatingCount ?? 0,
-        website: p.websiteUri ?? null,
-        phone: p.nationalPhoneNumber ?? null,
-        type: p.primaryTypeDisplayName?.text ?? metier,
-        maps_uri: p.googleMapsUri ?? null,
+  try {
+    if (!centre || !Number.isFinite(centre.lat) || !Number.isFinite(centre.lon)) throw new Error('Centre de recherche invalide.');
+    for (let pass = 0; pass < 6; pass++) {
+      if (!await shouldContinue()) { reason = 'objective_reached'; return finish(); }
+      rayon = pass === 5 ? maxRadius : Math.min(maxRadius, Math.round(initial * 1.65 ** pass));
+      // Shift the bias over the permitted area; a repeated city-wide query only returns the same first60.
+      const angle = pass * 2.399963229728653, offset = pass ? rayon * .45 : 0;
+      const biasCentre = { latitude: centre.lat + Math.sin(angle) * offset / 111320, longitude: centre.lon + Math.cos(angle) * offset / (111320 * Math.cos(centre.lat * Math.PI / 180)) };
+      const body = {
+        textQuery: pass ? metier : `${metier} ${ville}`, languageCode: ['fr','nl','en'].includes(langue) ? langue : 'fr', regionCode: pays ?? countryAt(centre.lat, centre.lon) ?? 'BE', pageSize: 20,
+        locationBias: { circle: { center: biasCentre, radius: pass ? rayon * .7 : rayon } },
       };
-      kept.push(place);
-      await onFound?.(place);
+      let pageToken;
+      for (let page = 1; page <= 3; page++) {
+        if (!await shouldContinue()) { reason = 'objective_reached'; return finish(); }
+        onLog?.(`Recherche « ${body.textQuery} » sur Google Maps, zone ${pass + 1}, page ${page}`);
+        queries++;
+        const data = await request(pageToken ? { ...body, pageToken } : body);
+        for (const p of data.places ?? []) {
+          const name = p.displayName?.text ?? '', lat = p.location?.latitude, lon = p.location?.longitude;
+          if (!p.id || !name || !Number.isFinite(lat) || !Number.isFinite(lon) || !countryAt(lat, lon)) continue;
+          if (distance(centre, { lat, lon }) > rayon || (p.businessStatus && p.businessStatus !== 'OPERATIONAL') || excluded(name)) continue;
+          const place = { id: p.id, name, address: p.formattedAddress ?? '', lat, lon, rating: p.rating ?? null, reviews: p.userRatingCount ?? 0,
+            website: p.websiteUri ?? null, phone: p.nationalPhoneNumber ?? null, type: p.primaryTypeDisplayName?.text ?? metier, maps_uri: p.googleMapsUri ?? null };
+          if (!place.website) { deferred.set(place.id, place); continue; }
+          deferred.delete(place.id);
+          if (!await emit(place)) return finish();
+        }
+        pageToken = data.nextPageToken;
+        if (!pageToken || page === 3) break;
+        if (!await shouldContinue()) { reason = 'objective_reached'; return finish(); }
+        await wait(1500);
+      }
     }
-    pageToken = data.nextPageToken;
-    if (!pageToken) break;
-    // Google demande un court délai avant que le jeton de page suivante soit valable.
-    await new Promise((r) => setTimeout(r, 1500));
+    for (const place of deferred.values()) if (!await emit(place)) break;
+    if (reason === 'radius_exhausted' && !await shouldContinue()) reason = 'objective_reached';
+  } catch (error) {
+    reason = 'source_error'; sourceError = error.message ?? String(error); onLog?.(sourceError);
   }
-  return kept;
+  return finish();
 }
 
 /** Trouve le centre d'une ville (pour une mission ailleurs qu'à Lyon). */

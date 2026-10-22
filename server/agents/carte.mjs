@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { ROOT } from '../env.mjs';
+import { countryAt } from '../benelux.mjs';
 
 const ENDPOINTS = [
   'https://overpass.openstreetmap.fr/api/interpreter', // OpenStreetMap France : le plus rapide pour une ville française
@@ -91,59 +92,69 @@ const distance = (a, b) => {
  * Cherche les commerces autour du centre de la ville, du plus proche au plus loin.
  * `onFound(place)` pour chaque commerce retenu, `onLog(texte)` pour raconter la recherche.
  */
-export async function eclairerOSM({ metier, ville, centre, rayon_m = 2500, nombre }, { onFound, onLog, exclure }) {
-  const sel = selecteurs(metier);
-  onLog?.(`Je fouille la carte de ${ville} : ${metier}`);
-  // Pas assez de commerces dans la zone : on l'élargit (deux fois au plus, jusqu'à 6 km), et on le dit.
-  let rayon = rayon_m, data = null, n = 0;
-  for (let essai = 0; essai < 3; essai++) {
-    const around = `(around:${Math.round(rayon)},${centre.lat},${centre.lon})`;
-    data = await overpass(`[out:json][timeout:50];(${sel.map((s) => s + around + ';').join('')});out tags center;`);
-    n = (data.elements ?? []).filter((e) => e.tags?.name && (e.tags.website || e.tags['contact:website'] || e.tags.url)).length;
-    if (n >= nombre || rayon >= 6000) break;
-    const plus = Math.min(6000, rayon * 1.6);
-    onLog?.(`Seulement ${n} avec un site dans ${(rayon / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} km : j'élargis à ${(plus / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} km`);
-    rayon = plus;
-  }
-  const all = [];
-  for (const e of data.elements ?? []) {
-    const t = e.tags ?? {};
-    const lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
-    if (!t.name || lat == null) continue;
-    if (exclure?.test(t.name) || exclure?.test(t.brand ?? '')) continue;
-    if (t['brand:wikidata']) continue; // une enseigne référencée : une chaîne
-    all.push({
-      id: `osm-${e.type}-${e.id}`,
-      name: t.name,
-      address: [t['addr:housenumber'], t['addr:street'], t['addr:postcode'], t['addr:city'] ?? ville].filter(Boolean).join(' '),
-      lat, lon,
-      rating: null,
-      reviews: null,
-      website: t.website ?? t['contact:website'] ?? t.url ?? null,
-      phone: t.phone ?? t['contact:phone'] ?? null,
-      email_osm: t.email ?? t['contact:email'] ?? null,
-      horaires: t.opening_hours ?? null,
-      type: metier,
-      maps_uri: `https://www.openstreetmap.org/${e.type}/${e.id}`,
-    });
-  }
-  // Doublons (même nom à quelques mètres) : on garde le premier.
-  const seen = [];
-  const uniques = all.filter((p) => {
-    if (seen.some((s) => s.name.toLowerCase() === p.name.toLowerCase() && distance(s, p) < 80)) return false;
-    seen.push(p);
+export async function eclairerOSM(
+  { metier, ville, centre, rayon_m = 2500, limite_scan = 250, rayon_max_m = 20000 },
+  { onFound, onLog, exclure, shouldContinue = () => true, request = overpass } = {},
+) {
+  const cap = Math.min(250, Math.max(1, Math.floor(Number(limite_scan) || 250)));
+  const maxRadius = Math.min(20000, Math.max(100, Number(rayon_max_m) || 20000));
+  const initial = Math.min(maxRadius, Math.max(100, Number(rayon_m) || 2500));
+  const sel = selecteurs(metier), kept = [], ids = new Set(), names = new Map(), deferred = new Map();
+  let rayon = initial, queries = 0, reason = 'radius_exhausted', sourceError = null;
+  const normalize = value => String(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const excluded = value => { if (!exclure) return false; exclure.lastIndex = 0; return exclure.test(value); };
+  const finish = () => Object.assign(kept, { rayon, queries, scanned: kept.length, exhausted: reason === 'radius_exhausted', reason, ...(sourceError ? { error: sourceError } : {}) });
+  const emit = async place => {
+    if (!await shouldContinue()) { reason = 'objective_reached'; return false; }
+    if (kept.length >= cap) { reason = 'scan_limit'; return false; }
+    const key = normalize(place.name);
+    if (ids.has(place.id) || (names.get(key) ?? []).some(p => distance(p, place) < 80)) return true;
+    ids.add(place.id); names.set(key, [...(names.get(key) ?? []), place]); kept.push(place);
+    if (await onFound?.(place) === false || !await shouldContinue()) { reason = 'objective_reached'; return false; }
+    if (kept.length >= cap) { reason = 'scan_limit'; return false; }
     return true;
-  });
-  uniques.sort((a, b) => distance(centre, a) - distance(centre, b));
-  // Les commerces qui ont un site d'abord (sans site, rien à lire), et quelques-uns sans pour rester honnête sur la carte.
-  const avec = uniques.filter((p) => p.website), sans = uniques.filter((p) => !p.website);
-  const nbSans = Math.min(sans.length, Math.max(0, nombre - avec.length), Math.round(nombre * 0.2));
-  const kept = [...avec.slice(0, nombre - nbSans), ...sans.slice(0, nbSans)]
-    .sort((a, b) => distance(centre, a) - distance(centre, b));
-  onLog?.(`Je repère ${uniques.length} commerces indépendants sur la carte, j'en garde ${kept.length}`);
-  for (const p of kept) await onFound?.(p);
-  kept.rayon = rayon;
-  return kept;
+  };
+  try {
+    if (!centre || !Number.isFinite(centre.lat) || !Number.isFinite(centre.lon)) throw new Error('Centre de recherche invalide.');
+    for (let pass = 0; pass < 6; pass++) {
+      if (!await shouldContinue()) { reason = 'objective_reached'; return finish(); }
+      const next = pass === 5 ? maxRadius : Math.min(maxRadius, Math.round(initial * 1.65 ** pass));
+      if (pass && next <= rayon) break;
+      rayon = next;
+      onLog?.(`Je fouille la carte de ${ville} : ${metier} — rayon ${(rayon / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} km`);
+      const around = `(around:${Math.round(rayon)},${centre.lat},${centre.lon})`;
+      queries++;
+      const data = await request(`[out:json][timeout:50];(${sel.map(s => s + around + ';').join('')});out tags center;`);
+      // Overpass can return a partial result with a timeout remark: never call that exhaustion.
+      if (data.remark) throw new Error(String(data.remark));
+      const candidates = [];
+      for (const e of data.elements ?? []) {
+        const t = e.tags ?? {}, lat = e.lat ?? e.center?.lat, lon = e.lon ?? e.center?.lon;
+        if (!t.name || !Number.isFinite(lat) || !Number.isFinite(lon) || !countryAt(lat, lon)) continue;
+        if (distance(centre, { lat, lon }) > rayon || excluded(t.name) || excluded(t.brand ?? '') || t['brand:wikidata']) continue;
+        candidates.push({
+          id: `osm-${e.type}-${e.id}`, name: t.name,
+          address: [t['addr:housenumber'], t['addr:street'], t['addr:postcode'], t['addr:city'] ?? ville].filter(Boolean).join(' '),
+          lat, lon, rating: null, reviews: null, website: t.website ?? t['contact:website'] ?? t.url ?? null,
+          phone: t.phone ?? t['contact:phone'] ?? null, email_osm: t.email ?? t['contact:email'] ?? null,
+          horaires: t.opening_hours ?? null, type: metier, maps_uri: `https://www.openstreetmap.org/${e.type}/${e.id}`,
+        });
+      }
+      candidates.sort((a, b) => distance(centre, a) - distance(centre, b));
+      for (const p of candidates) {
+        if (!p.website) { deferred.set(p.id, p); continue; }
+        deferred.delete(p.id);
+        if (!await emit(p)) return finish();
+      }
+      if (rayon >= maxRadius) break;
+    }
+    // Prefer reading genuine sites across the whole allowed area before no-site results.
+    for (const p of [...deferred.values()].sort((a, b) => distance(centre, a) - distance(centre, b))) if (!await emit(p)) break;
+    if (reason === 'radius_exhausted' && !await shouldContinue()) reason = 'objective_reached';
+  } catch (error) {
+    reason = 'source_error'; sourceError = error.message ?? String(error); onLog?.(sourceError);
+  }
+  return finish();
 }
 
 /**

@@ -71,7 +71,7 @@ export function createHud(root, world) {
     if (type === 'mission') {
       const m = d ?? {};
       $('h-title').textContent = `${capital(tr(m.metier ?? 'Commerces'))} · ${m.ville ?? ''}`;
-      $('h-sub').textContent = tr('{km} km autour du QG · {nombre} commerces au plus', { km: ((m.rayon ?? 2200) / 1000).toLocaleString(getLocale(), { maximumFractionDigits: 1 }), nombre: m.nombre ?? '' });
+      $('h-sub').textContent = m.objectif_contacts ? tr('Objectif : {contacts} contacts · {mails} mails',{contacts:m.objectif_contacts,mails:m.objectif_mails??0}) : tr('{km} km autour du QG · {nombre} commerces au plus', { km: ((m.rayon ?? 2200) / 1000).toLocaleString(getLocale(), { maximumFractionDigits: 1 }), nombre: m.nombre ?? '' });
       for (const id of ['h-quest', 'h-res', 'h-party']) $(id).hidden = false;
       letters.innerHTML = '';
       $('h-inbox').hidden = true;
@@ -79,10 +79,12 @@ export function createHud(root, world) {
     if (type === 'scouted') {
       const m = world.mission ?? {};
       const km = ((m.rayon ?? 2200) / 1000).toLocaleString(getLocale(), { maximumFractionDigits: 1 });
+      if(m.objectif_contacts)return;
       $('h-sub').textContent = d.demandes && d.trouves < d.demandes
         ? tr("{nombre} trouvés sur {demandes} demandés · {km} km autour du QG (la zone n'en a pas plus)", { nombre: d.trouves, demandes: d.demandes, km })
         : tr('{nombre} trouvés · {km} km autour du QG', { nombre: d.trouves, km });
     }
+    if(type==='progress')$('h-sub').textContent=tr('{lus} visites · {contacts}/{cible} contacts · {mails}/{objectif} mails',{lus:d.lus??0,contacts:d.retenus??0,cible:d.objectif_contacts??0,mails:d.ecrits??0,objectif:d.objectif_mails??0});
     if (type === 'mail') {
       const q = d.q;
       $('h-inbox').hidden = false;
@@ -126,7 +128,7 @@ export function createHud(root, world) {
       counters[k] = now[k];
     }
     $('h-nin').textContent = now.prets;
-    $('h-bar').style.transform = `scaleX(${now.trouves ? now.lus / now.trouves : 0})`;
+    const progress=world.progress;const ratio=progress?.objectif_contacts?Math.min((progress.retenus??0)/progress.objectif_contacts,progress.objectif_mails?(progress.ecrits??0)/progress.objectif_mails:1):(now.trouves?now.lus/now.trouves:0);$('h-bar').style.transform=`scaleX(${Math.min(1,ratio)})`;
     for (const [id, f] of frames) {
       const a = world.actors.get(id);
       const st = a?.status ?? '';

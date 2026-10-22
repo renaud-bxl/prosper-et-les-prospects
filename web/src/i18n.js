@@ -15,6 +15,12 @@ export function setLang(lang) {
 
 // French source phrase: [Dutch, English]. Braced values are inserted without translating their content.
 const messages = {
+  'Objectif : {contacts} contacts · {mails} mails':['Doel: {contacts} contacten · {mails} e-mails','Target: {contacts} contacts · {mails} emails'],
+  '{lus} visites · {contacts}/{cible} contacts · {mails}/{objectif} mails':['{lus} bezoeken · {contacts}/{cible} contacten · {mails}/{objectif} e-mails','{lus} visits · {contacts}/{cible} contacts · {mails}/{objectif} emails'],
+  'Résultats conservés : {nombre} mails prêts.':['Resultaten bewaard: {nombre} e-mails klaar.','Results preserved: {nombre} emails ready.'],
+  'Objectif incomplet':['Doel onvolledig','Target incomplete'],
+  'La source des commerces ne répond pas…':['De bedrijfsbron reageert niet…','The business source is not responding…'],
+  'Reprise de la rédaction…':['Schrijven wordt opnieuw geprobeerd…','Retrying this draft…'],
   'Suivre {nom}':['{nom} volgen','Follow {nom}'],
   'Lancer le film':['Film starten','Play film'],
   'Mission': ['Missie', 'Mission'],

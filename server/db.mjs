@@ -17,7 +17,7 @@ db.exec(`
     id TEXT, run_id TEXT, name TEXT, address TEXT, lat REAL, lon REAL, rating REAL, reviews INTEGER,
     website TEXT, phone TEXT, type TEXT, maps_uri TEXT,
     status TEXT, score INTEGER, signals TEXT, emails TEXT, to_email TEXT, excerpt TEXT,
-    constat TEXT, objet TEXT, mail TEXT, decided_at INTEGER, updated_at INTEGER,
+    constat TEXT, objet TEXT, mail TEXT, mail_langue TEXT, mail_langue_source TEXT, decided_at INTEGER, updated_at INTEGER,
     PRIMARY KEY (run_id, id)
   );
   CREATE TABLE IF NOT EXISTS events (
@@ -30,6 +30,13 @@ for (const [table, col] of [
   ['places', 'gid TEXT'], ['places', 'horaires TEXT'], ['places', 'email_source TEXT'],
 ]) {
   try { db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`); } catch {}
+}
+
+// Provenance figée avec chaque nouveau brouillon. Les anciens mails restent NULL :
+// leurs réglages actuels ne permettent pas de reconstruire leur langue d'origine.
+const placeColumns = new Set(db.prepare('PRAGMA table_info(places)').all().map((column) => column.name));
+for (const column of ['mail_langue', 'mail_langue_source']) {
+  if (!placeColumns.has(column)) db.exec(`ALTER TABLE places ADD COLUMN ${column} TEXT`);
 }
 
 const JSON_COLS = ['signals', 'emails'];
