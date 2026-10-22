@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="650" viewBox="0 0 800 650" role="img" aria-labelledby="town-title town-desc">
+  <title id="town-title">Le quartier général de Prosper dans une ville du Benelux</title>
+  <desc id="town-desc">Trois façades accueillantes, un commerce, un cabinet vétérinaire, un canal et son pont, des arbres et des chemins piétons. Le décor laisse la place à l’équipe animée.</desc>
+  <metadata>Original editable vector scenery for Prosper et les prospects. Material palette inspired by Oscar et les Agents, Copyright 2026 Renaud, MIT. No external resources and no embedded people.</metadata>
+  <defs>
+    <linearGradient id="town-sky" x2="0" y2="1"><stop stop-color="#e8ede1"/><stop offset="1" stop-color="#f5f4ec"/></linearGradient>
+    <linearGradient id="town-glass" x2="0" y2="1"><stop stop-color="#bfd6d4"/><stop offset="1" stop-color="#dce5d7"/></linearGradient>
+    <linearGradient id="town-water" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#bfd6d4"/><stop offset=".65" stop-color="#a7c3bd"/><stop offset="1" stop-color="#91afa5"/></linearGradient>
+    <linearGradient id="town-wood" x2="0" y2="1"><stop stop-color="#e9ddc6"/><stop offset="1" stop-color="#d8c8a8"/></linearGradient>
+    <pattern id="town-paving" width="86" height="42" patternUnits="userSpaceOnUse"><path d="M0 42H86M86 0V42M43 0V21" fill="none" stroke="#d5d6c8" stroke-width=".8"/></pattern>
+    <g id="town-planter"><ellipse cy="5" rx="19" ry="5" fill="#b6bbaa" opacity=".3"/><path d="M-14-11  -10 9Q0 15 10 9L14-11Z" fill="#b79979"/><ellipse cy="-11" rx="14" ry="4" fill="#d8c8a8"/><path d="M0-10V-48" fill="none" stroke="#6f8b72" stroke-width="3" stroke-linecap="round"/><g fill="#83a58b"><ellipse cx="-9" cy="-40" rx="12" ry="7" transform="rotate(28 -9 -40)"/><ellipse cx="10" cy="-50" rx="13" ry="7" transform="rotate(-30 10 -50)"/><ellipse cx="10" cy="-25" rx="12" ry="7" transform="rotate(-26 10 -25)"/><ellipse cx="-10" cy="-21" rx="11" ry="6" transform="rotate(28 -10 -21)"/></g><path d="m-12-40 10 3m12-12-9 4m11 20-10 3" fill="none" stroke="#b4c7ab" stroke-width="1.2" stroke-linecap="round"/></g>
+    <g id="town-tree"><ellipse cy="8" rx="43" ry="11" fill="#8ca18b" opacity=".16"/><path d="M-5 0 0-88 8 0" fill="#b79979"/><path d="m2-43-19-21m21 8 18-19" stroke="#a28e70" stroke-width="4" stroke-linecap="round"/><g fill="#83a58b"><ellipse cx="-22" cy="-91" rx="31" ry="35"/><ellipse cx="20" cy="-94" rx="35" ry="37"/><ellipse cy="-123" rx="34" ry="37"/></g><g fill="#a6bda5"><ellipse cx="-20" cy="-110" rx="22" ry="28"/><ellipse cx="13" cy="-134" rx="22" ry="24"/></g><path d="m-36-90 22-13m12-23 14-12m6 55 20-13" stroke="#c4d2b8" stroke-width="2" stroke-linecap="round" opacity=".65"/></g>
+    <g id="town-window"><rect width="49" height="64" rx="8" fill="#cad2c3"/><rect x="4" y="4" width="41" height="56" rx="5" fill="url(#town-glass)"/><path d="M24.5 5V59M5 32h39" stroke="#fffef9" stroke-width="3"/><path d="M10 11h9m12 0h7" stroke="#fffef9" stroke-width="2" opacity=".8" stroke-linecap="round"/><path d="M-3 64h55" stroke="#eee5c9" stroke-width="7" stroke-linecap="round"/></g>
+    <g id="town-flower"><path d="M0 0v-20" stroke="#79977e" stroke-width="2"/><ellipse cx="-4" cy="-8" rx="5" ry="3" fill="#a6bda5" transform="rotate(30 -4 -8)"/><g fill="#d9b4a2"><circle cy="-23" r="5"/><circle cx="-5" cy="-19" r="5"/><circle cx="5" cy="-19" r="5"/></g><circle cy="-19" r="3" fill="#eee5c9"/></g>
+  </defs>
+
+  <!-- The whole frame is scenery; the three clear paths are reserved for the live team. -->
+  <rect width="800" height="650" fill="url(#town-sky)"/>
+  <path d="M0 236Q123 204 257 228T541 220 800 235V376H0Z" fill="#dce5d7"/>
+  <path d="M0 316Q181 287 367 320T800 321V650H0Z" fill="#e5e3d5"/>
+  <path d="M0 316Q181 287 367 320T800 321V650H0Z" fill="url(#town-paving)"/>
+  <path d="M205 378Q341 334 421 361T738 444L800 482V650H298Q243 556 205 378Z" fill="#f5f0df" opacity=".6"/>
+  <path d="M15 287Q141 266 228 284M533 284q124-23 247 6" fill="none" stroke="#fffef9" stroke-width="3" opacity=".8" stroke-linecap="round"/>
+  <g fill="#fffef9" opacity=".65"><path d="M43 64q13-20 32-7 12-26 35-9 23-5 31 16Z"/><path d="M567 48q13-21 30-8 15-24 37-6 21-5 33 14Z"/></g>
+
+  <!-- A quiet canal curves past the pedestrian square. -->
+  <path d="M-64 373C55 367 130 421 161 494S208 609 315 691" fill="none" stroke="#c5cebd" stroke-width="148"/>
+  <path d="M-64 373C55 367 130 421 161 494S208 609 315 691" fill="none" stroke="#fffef9" stroke-width="126"/>
+  <path d="M-64 373C55 367 130 421 161 494S208 609 315 691" fill="none" stroke="url(#town-water)" stroke-width="110"/>
+  <g fill="none" stroke="#e7eee0" stroke-width="2.5" stroke-linecap="round" opacity=".7"><path d="m13 371 26 3m24 29 24 7m30 75 9 21m30 52 17 21m43 40 22 17"/><path d="m23 398 21 7m57 35 15 20m19 67 11 16m40 52 22 19"/></g>
+  <path d="M-8 333Q83 333 132 378M219 541q26 58 88 100" fill="none" stroke="#a9b6a0" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- Three rounded Benelux façades, with no invented business names. -->
+  <ellipse cx="136" cy="348" rx="116" ry="18" fill="#aab6a0" opacity=".19"/>
+  <path d="M40 333V157Q40 147 50 147h31v-24q0-10 10-10h20V94q0-10 12-10h26q12 0 12 10v19h20q10 0 10 10v24h28q11 0 11 11v175Z" fill="#d9b4a2" stroke="#b69880" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M48 325V161h173v164" fill="#f1ded1"/>
+  <path d="M44 159h181M78 146h113M108 114h54" stroke="#f8f3e7" stroke-width="6" stroke-linecap="round"/>
+  <use href="#town-window" x="66" y="176"/><use href="#town-window" x="154" y="176"/>
+  <rect x="62" y="264" width="145" height="62" rx="9" fill="#90aaa0"/>
+  <rect x="68" y="270" width="132" height="49" rx="6" fill="url(#town-glass)"/>
+  <path d="M135 270v49" stroke="#f5f4ec" stroke-width="4"/>
+  <rect x="111" y="252" width="47" height="29" rx="12" fill="#fffef9" stroke="#dce1d5"/>
+  <g fill="#6d8a6d"><ellipse cx="135" cy="268" rx="9" ry="6"/><ellipse cx="124" cy="261" rx="3" ry="4" transform="rotate(-25 124 261)"/><ellipse cx="131" cy="257" rx="3" ry="4"/><ellipse cx="139" cy="257" rx="3" ry="4"/><ellipse cx="147" cy="261" rx="3" ry="4" transform="rotate(25 147 261)"/></g>
+  <path d="M43 334h184" stroke="#bba786" stroke-width="8" stroke-linecap="round"/>
+
+  <ellipse cx="397" cy="342" rx="139" ry="19" fill="#aab6a0" opacity=".2"/>
+  <path d="M272 327V123q0-15 15-15h28V84q0-10 11-10h34V54q0-10 11-10h53q11 0 11 10v20h34q11 0 11 10v24h28q15 0 15 15v204Z" fill="#bbcbb8" stroke="#8fa58b" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M283 322V123h229v199" fill="#e7ecdf"/>
+  <path d="M274 121h247M315 107h166M360 74h74" stroke="#fffef9" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="397" cy="94" r="11" fill="#fffef9" stroke="#a9b89c" stroke-width="2"/>
+  <path d="M397 87v8l5 3" fill="none" stroke="#6d8a6d" stroke-width="2" stroke-linecap="round"/>
+  <use href="#town-window" x="308" y="143"/><use href="#town-window" x="438" y="143"/>
+  <rect x="304" y="225" width="187" height="31" rx="12" fill="#446e57"/>
+  <text x="397.5" y="246" text-anchor="middle" fill="#fffdf2" font-family="Inter, 'Avenir Next', Avenir, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="16" font-weight="650" letter-spacing="1.1">QG PROSPER</text>
+  <rect x="302" y="272" width="53" height="51" rx="7" fill="#cad2c3"/><rect x="307" y="277" width="43" height="39" rx="4" fill="url(#town-glass)"/>
+  <rect x="440" y="272" width="53" height="51" rx="7" fill="#cad2c3"/><rect x="445" y="277" width="43" height="39" rx="4" fill="url(#town-glass)"/>
+  <path d="M328 278v38m138-38v38" stroke="#fffef9" stroke-width="3"/>
+  <rect x="371" y="265" width="53" height="66" rx="9" fill="#647f78"/>
+  <rect x="378" y="272" width="39" height="45" rx="6" fill="#bad0bf"/>
+  <path d="M386 279h17" stroke="#e7eee0" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="414" cy="310" r="2.5" fill="#eee5c9"/>
+  <path d="M364 333h68" stroke="#d8c8a8" stroke-width="8" stroke-linecap="round"/>
+
+  <ellipse cx="665" cy="367" rx="117" ry="19" fill="#aab6a0" opacity=".18"/>
+  <path d="M567 350V168q0-12 12-12h18q15-52 69-62 54 10 69 62h17q12 0 12 12v182Z" fill="#d8c8a8" stroke="#b4a88b" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M576 346V174h179v172" fill="#eee5c9"/>
+  <path d="M571 169h189M595 156q15-44 71-55 55 11 70 55" fill="none" stroke="#fffef9" stroke-width="6" stroke-linecap="round"/>
+  <use href="#town-window" x="596" y="191"/><use href="#town-window" x="687" y="191"/>
+  <rect x="587" y="282" width="156" height="65" rx="8" fill="#718e87"/>
+  <rect x="594" y="288" width="96" height="50" rx="5" fill="url(#town-glass)"/><rect x="697" y="288" width="39" height="59" rx="5" fill="#bad0bf"/>
+  <path d="M642 290v46" stroke="#fffef9" stroke-width="3"/><circle cx="728" cy="320" r="2" fill="#eee5c9"/>
+  <path d="M581 263h167l10 24q-11 12-22 0-10 12-20 0-11 12-21 0-10 12-20 0-11 12-21 0-10 12-21 0-10 12-20 0-11 12-22 0Z" fill="#95b29c" stroke="#6f8b72" stroke-width="1" stroke-linejoin="round"/>
+  <g fill="#f5f4ec"><path d="M600 263h19l-3 24q-10 11-20 0Z"/><path d="M640 263h19l1 24q-11 11-21 0Z"/><path d="M680 263h19l5 24q-10 11-21 0Z"/><path d="M720 263h19l9 24q-10 11-20 0Z"/></g>
+  <rect x="601" y="333" width="71" height="13" rx="4" fill="#b79979"/>
+  <use href="#town-flower" x="613" y="334"/><use href="#town-flower" x="636" y="334"/><use href="#town-flower" x="659" y="334"/>
+  <path d="M572 354h187" stroke="#bba786" stroke-width="8" stroke-linecap="round"/>
+
+  <!-- The bridge and its railings are rounded wood, with open pedestrian approaches. -->
+  <g transform="translate(141 466) rotate(-35)">
+    <ellipse cy="17" rx="54" ry="17" fill="#6f8b7229"/>
+    <path d="M-53 13q53-29 106 0v9q-53-28-106 0Z" fill="#b79979"/>
+    <path d="M-53 5q53-29 106 0v10q-53-28-106 0Z" fill="url(#town-wood)" stroke="#a28e70" stroke-width="1.3"/>
+    <g stroke="#bba786" stroke-width="1.1"><path d="M-40-1v10m14-14v10m14-12v10M2-8v10m14-9v10m14-7v10m14-5v10"/></g>
+    <g fill="none" stroke="#8ba080" stroke-linecap="round"><path d="M-54-12q54-27 108 0" stroke-width="4"/><path d="M-51-11V6m20-25v18m20-23v17m20-17v17m20-12v18m20-11v17" stroke-width="2.7"/></g>
+  </g>
+
+  <!-- Plants frame the paths rather than occupy the three animation positions. -->
+  <use href="#town-tree" x="9" y="296"/><use href="#town-tree" x="799" y="337"/>
+  <use href="#town-planter" x="39" y="345"/><use href="#town-planter" x="530" y="341"/><use href="#town-planter" x="763" y="398"/>
+  <g transform="translate(646 590)"><ellipse cy="18" rx="70" ry="13" fill="#b6bbaa" opacity=".2"/><path d="M-48 0v26m96-26v26" stroke="#8a9a80" stroke-width="6" stroke-linecap="round"/><rect x="-60" y="-12" width="120" height="27" rx="9" fill="#c9b797"/><rect x="-60" y="-22" width="120" height="20" rx="8" fill="#e0d0b3"/><path d="M-50-11H50" stroke="#fff6e3" stroke-width="2" stroke-linecap="round"/></g>
+  <use href="#town-planter" x="747" y="607"/>
+  <path d="M292 378Q372 365 427 408T619 478" fill="none" stroke="#91aa8b" stroke-width="2.4" stroke-dasharray="1 13" stroke-linecap="round" opacity=".65"/>
+  <g transform="translate(546 391)"><ellipse cy="29" rx="18" ry="5" fill="#b6bbaa" opacity=".22"/><path d="m-7 9 7 13 8-13" fill="#e7ecdf"/><rect x="-22" y="-15" width="44" height="31" rx="10" fill="#fffef9" stroke="#d0d9c7" stroke-width="1.5"/><rect x="-12" y="-6" width="24" height="15" rx="3" fill="#e7ecdf" stroke="#6d8a6d" stroke-width="1.3"/><path d="m-11-4 11 8 11-8" fill="none" stroke="#6d8a6d" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></g>
+  <g transform="translate(214 345)"><ellipse cy="28" rx="15" ry="4" fill="#b6bbaa" opacity=".2"/><path d="m-5 10 5 11 6-11" fill="#f1ded1"/><rect x="-16" y="-14" width="32" height="29" rx="10" fill="#f1ded1" stroke="#d9c7b5" stroke-width="1.3"/><circle cy="-5" r="1.6" fill="#946f57"/><path d="M0 1v7" stroke="#946f57" stroke-width="2.5" stroke-linecap="round"/></g>
+  <g opacity=".65" stroke="#fffef9" stroke-width="2" stroke-linecap="round"><path d="M376 548h37m59 34h25m-170-75h20m373 17h25"/></g>
+</svg>
