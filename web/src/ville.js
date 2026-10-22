@@ -127,7 +127,8 @@ export async function loadCity({ centre, radius = 2200, onProgress, fetchTile })
   for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) tiles.push([x, y]);
   const get = fetchTile ?? ((z, x, y) => fetch(`/api/tiles/${z}/${x}/${y}`).then((r) => { if (!r.ok) throw new Error(tr('tuile {x}/{y}', { x, y })); return r.arrayBuffer(); }));
   // Les immeubles un par un et les vrais arbres (OpenStreetMap) ; sinon, les pâtés de maisons des tuiles.
-  const osm = await fetch(`/api/ville?lat=${centre.lat}&lon=${centre.lon}&r=${Math.round(radius * 1.05)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const detailedRadius=Math.min(radius,2300)*1.05;
+  const osm = await fetch(`/api/ville?lat=${centre.lat}&lon=${centre.lon}&r=${Math.round(detailedRadius)}`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
   const useOsm = Boolean(osm?.batiments?.length);
 
   const buildings = new Map();
@@ -153,7 +154,7 @@ export async function loadCity({ centre, radius = 2200, onProgress, fetchTile })
         fn(f.toGeoJSON(tx, ty, Z), f.properties, f.id);
       }
     };
-    if (!useOsm) each('building', (gj, p, id) => {
+    each('building', (gj, p, id) => {
       const key = id || synth++;
       let b = buildings.get(key);
       if (!b) { b = { id: 0, parts: [], h: 0 }; buildings.set(key, b); }
@@ -207,6 +208,7 @@ export async function loadCity({ centre, radius = 2200, onProgress, fetchTile })
 
   let realTrees = null;
   if (useOsm) {
+    for(const [id,b] of buildings){const points=b.parts.flat(2);if(!points.length)continue;let x=0,y=0;for(const point of points){x+=point[0];y+=point[1];}x/=points.length;y/=points.length;if(Math.abs(x)<detailedRadius&&Math.abs(y)<detailedRadius)buildings.delete(id);}
     const ring = (f) => { const r = []; for (let i = 0; i + 1 < f.length; i += 2) r.push(toXY(f[i + 1], f[i])); return r; };
     for (const b of osm.batiments) buildings.set(b.id, { parts: [b.rings.map(ring)], h: b.h, kind: b.k, colour: b.c, roofColour: b.rc });
     realTrees = osm.arbres.map(([lon, lat]) => toXY(lat, lon));
@@ -671,49 +673,69 @@ function facadePixel(r, Hb, hx, b, L, tone, cornice, base, wall2, pal) {
 /* ------------------------------------------------------------------ les arbres */
 function plantTrees(city) {
   const trees = [];
-  const ok = (x, y, pad = 1.4) => !city.buildingAt(x, y) && !city.onRoad(x, y, pad) && ![AREA.water, AREA.pool, AREA.pitch, AREA.track].includes(city.areaAt(x, y));
+  // Decoration is detailed near headquarters only. The full city bounds, real
+  // addresses and routing graph remain available well beyond this circle.
+  const radius = Math.min(2300, city.radius ?? 2300), radius2 = radius * radius;
+  const inside = (x, y) => Number.isFinite(x) && Number.isFinite(y) && x * x + y * y <= radius2;
+  const outside = (bb) => bb.maxx < -radius || bb.minx > radius || bb.maxy < -radius || bb.miny > radius;
   const near = new Set();
-  if (city.realTrees) {
-    for (const [x, y] of city.realTrees) {
-      if (city.buildingAt(x, y)) continue;
-      const h = hash2(Math.round(x * 3), Math.round(y * 3));
-      trees.push({ x, y, r: 2.4 + h * 1.3, k: 0 });
-      near.add(Math.floor(x / 6) * 100003 + Math.floor(y / 6));
-    }
+  const cell = (x, y) => Math.floor(x / 8) * 100003 + Math.floor(y / 8);
+  // These are actual OSM positions, not decoration: preserve every real tree in
+  // the detailed zone, even if their count alone exceeds the decorative budget.
+  for (const [x, y] of city.realTrees ?? []) {
+    if (!inside(x, y)) continue;
+    const h = hash2(Math.round(x * 3), Math.round(y * 3));
+    trees.push({ x, y, r: 2.4 + h * 1.3, k: 0 });
+    near.add(cell(x, y));
   }
-  // le long des grands axes et des quais (seulement sans les vrais arbres)
-  if (!city.realTrees) for (const r of city.roads) {
-    if (r.rank < 5 || r.pave || r.bridge) continue;
-    let carry = hash2(Math.round(r.pts[0][0]), Math.round(r.pts[0][1])) * 9;
-    for (let k = 0; k + 1 < r.pts.length; k++) {
-      const [ax, ay] = r.pts[k], [bx, by] = r.pts[k + 1];
-      const len = Math.hypot(bx - ax, by - ay);
-      if (len < 0.5) continue;
-      const ux = (bx - ax) / len, uy = (by - ay) / len;
-      for (let d = carry; d < len; d += 9.5) {
+  const maximum = 6000, deadline = performance.now() + 200;
+  const exhausted = () => trees.length >= maximum || performance.now() >= deadline;
+  const ok = (x, y, pad = 1.4) => inside(x, y) && !near.has(cell(x, y))
+    && !city.buildingAt(x, y) && !city.onRoad(x, y, pad)
+    && ![AREA.water, AREA.pool, AREA.pitch, AREA.track].includes(city.areaAt(x, y));
+  const add = (x, y, r, k) => { trees.push({ x, y, r, k }); near.add(cell(x, y)); };
+  if (exhausted()) return trees;
+
+  // Sparse street trees are a fallback when the central OSM data has no trees.
+  if (!city.realTrees?.length) for (const road of city.roads) {
+    if (exhausted()) return trees;
+    if (road.rank < 5 || road.pave || road.bridge || outside(road.bb)) continue;
+    let carry = hash2(Math.round(road.pts[0][0]), Math.round(road.pts[0][1])) * 20;
+    for (let k = 0; k + 1 < road.pts.length; k++) {
+      const [ax, ay] = road.pts[k], [bx, by] = road.pts[k + 1];
+      const length = Math.hypot(bx - ax, by - ay);
+      if (length < 0.5) continue;
+      const ux = (bx - ax) / length, uy = (by - ay) / length;
+      for (let d = carry; d < length; d += 20) {
+        if (exhausted()) return trees;
         for (const side of [-1, 1]) {
-          const off = r.w / 2 + 2.1;
-          const x = ax + ux * d - uy * off * side, y = ay + uy * d + ux * off * side;
-          if (ok(x, y)) trees.push({ x, y, r: 2.6 + hash2(Math.round(x * 3), Math.round(y * 3)) * 1.1, k: 0 });
+          if (exhausted()) return trees;
+          const offset = road.w / 2 + 2.1;
+          const x = ax + ux * d - uy * offset * side, y = ay + uy * d + ux * offset * side;
+          if (ok(x, y)) add(x, y, 2.6 + hash2(Math.round(x * 3), Math.round(y * 3)) * 1.1, 0);
         }
       }
-      carry = ((carry - len) % 9.5 + 9.5) % 9.5;
+      carry = ((carry - length) % 20 + 20) % 20;
     }
   }
-  // dans les parcs et les bois
-  for (const a of city.areas) {
-    if (a.kind !== AREA.grass && a.kind !== AREA.wood) continue;
-    const step = a.kind === AREA.wood ? 5.5 : 8.5;
-    const area = (a.bb.maxx - a.bb.minx) * (a.bb.maxy - a.bb.miny);
-    if (area < 300 || area > 4e6) continue;
-    for (let x = Math.ceil(a.bb.minx / step) * step; x < a.bb.maxx; x += step) {
-      for (let y = Math.ceil(a.bb.miny / step) * step; y < a.bb.maxy; y += step) {
+  for (const area of city.areas) {
+    if (exhausted()) return trees;
+    if ((area.kind !== AREA.grass && area.kind !== AREA.wood) || outside(area.bb)) continue;
+    const step = area.kind === AREA.wood ? 12 : 16;
+    const size = (area.bb.maxx - area.bb.minx) * (area.bb.maxy - area.bb.miny);
+    if (size < 300 || size > 4e6) continue;
+    const minx = Math.max(-radius, area.bb.minx), maxx = Math.min(radius, area.bb.maxx);
+    const miny = Math.max(-radius, area.bb.miny), maxy = Math.min(radius, area.bb.maxy);
+    for (let x = Math.ceil(minx / step) * step; x < maxx; x += step) {
+      for (let y = Math.ceil(miny / step) * step; y < maxy; y += step) {
+        if (exhausted()) return trees;
         const h = hash2(Math.round(x * 10), Math.round(y * 10));
-        if (a.kind === AREA.grass && h < 0.35) continue;
-        const jx = x + (hash2(Math.round(y), Math.round(x)) - 0.5) * step * 0.8, jy = y + (h - 0.5) * step * 0.8;
-        if (near.has(Math.floor(jx / 6) * 100003 + Math.floor(jy / 6))) continue;
-        if (!inRings(jx, jy, a.rings) || !ok(jx, jy, 1.8)) continue;
-        trees.push({ x: jx, y: jy, r: 2.8 + h * 1.6, k: a.kind === AREA.wood ? 1 : 0 });
+        if (area.kind === AREA.grass && h < 0.35) continue;
+        const jx = x + (hash2(Math.round(y), Math.round(x)) - 0.5) * step * 0.8;
+        const jy = y + (h - 0.5) * step * 0.8;
+        if (!inside(jx, jy) || near.has(cell(jx, jy))) continue;
+        if (!inRings(jx, jy, area.rings) || !ok(jx, jy, 1.8)) continue;
+        add(jx, jy, 2.8 + h * 1.6, area.kind === AREA.wood ? 1 : 0);
       }
     }
   }

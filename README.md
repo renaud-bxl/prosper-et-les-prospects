@@ -1,10 +1,12 @@
 # Prosper et les prospects
 
-Une équipe de sept robots explore les commerces du **Benelux**, lit leurs sites et prépare des premiers contacts. Vous choisissez la ville, le métier et votre offre. Prosper coordonne Léo, Hugo, Zoé, Iris, Malo et Nina sur la carte réelle, en pixel art.
+Une équipe de sept personnages explore les commerces du **Benelux**, lit leurs sites et prépare des premiers contacts. Vous choisissez la ville, le métier et votre offre. Prosper coordonne Léo, Hugo, Zoé, Iris, Malo et Nina sur la carte réelle, dans une ville illustrée.
 
 **Interface et mails en français, néerlandais et anglais. Aucun mail n’est envoyé par le logiciel.**
 
 Adaptation du [QG des agents](https://github.com/devlikemasta/qg-des-agents), sous licence MIT. Le thème clair et nuit reprend les couleurs de [Oscar et les agents](https://github.com/renaud-bxl/oscar-et-les-agents), l’autre application de cette famille.
+
+![Le QG et son équipe illustrée](docs/qg.png)
 
 ## Installer et démarrer
 
@@ -26,7 +28,8 @@ Le logiciel ouvre **http://127.0.0.1:5577**. Il n’écoute que sur votre ordina
 3. Sélectionnez un métier, un rayon et un nombre de commerces. Commencez par cinq.
 4. Choisissez **Lecture seule**, **Claude Code** ou **Codex**. Pour les mails, renseignez votre offre et votre signature. La langue des mails est indépendante de celle de l’interface ; le mode automatique suit la langue déclarée par le site, sinon le français.
 5. Lancez la mission. Le scout découvre les commerces ; les lecteurs empruntent les rues et entrent dans les bâtiments. Cliquez sur un commerce pour consulter contacts, observations et score.
-6. Relisez et corrigez chaque brouillon, puis validez ou refusez. L’envoi éventuel se fait depuis votre messagerie.
+6. À la fin, la fenêtre de résultats s’ouvre sur toute la surface disponible. Les clients potentiels, leurs contacts et leurs brouillons y sont réunis. En mode analyse seule, renseignez votre offre et votre signature dans cette fenêtre puis préparez les mails manquants, sans relancer la recherche.
+7. Relisez et corrigez chaque brouillon, puis validez ou refusez. L’envoi éventuel se fait depuis votre messagerie.
 
 Les sites publics peuvent être incomplets ou inaccessibles. Les signaux sont des observations automatiques, à vérifier avant usage : l’absence d’un module détecté ne prouve pas l’absence du service. Les commerces sans contact public peuvent être écartés. Les données cartographiques dépendent d’OpenStreetMap et des services de tuiles publics.
 

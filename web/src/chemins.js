@@ -36,23 +36,48 @@ export function buildGraph(city) {
   const CELL = 8;
   const segs = new Map();
   const key = (gx, gy) => gx * 100003 + gy;
+  const indexedSegments = new Map();
   const addSeg = (a, b) => {
-    const x0 = Math.min(xs[a], xs[b]), x1 = Math.max(xs[a], xs[b]), y0 = Math.min(ys[a], ys[b]), y1 = Math.max(ys[a], ys[b]);
-    for (let gx = Math.floor(x0 / CELL); gx <= Math.floor(x1 / CELL); gx++) {
-      for (let gy = Math.floor(y0 / CELL); gy <= Math.floor(y1 / CELL); gy++) {
-        const k = key(gx, gy);
-        let l = segs.get(k);
-        if (!l) { l = []; segs.set(k, l); }
-        l.push([a, b]);
-      }
+    const id = a < b ? `${a}:${b}` : `${b}:${a}`;
+    if (indexedSegments.has(id)) return;
+    const segment = [a, b];
+    indexedSegments.set(id, segment);
+    const ax = xs[a], ay = ys[a], bx = xs[b], by = ys[b];
+    if (![ax, ay, bx, by].every(Number.isFinite)) return;
+    let gx = Math.floor(ax / CELL), gy = Math.floor(ay / CELL);
+    const endX = Math.floor(bx / CELL), endY = Math.floor(by / CELL);
+    const dx = bx - ax, dy = by - ay, stepX = Math.sign(dx), stepY = Math.sign(dy);
+    const deltaX = dx ? Math.abs(CELL / dx) : Infinity, deltaY = dy ? Math.abs(CELL / dy) : Infinity;
+    let nextX = dx ? ((stepX > 0 ? gx + 1 : gx) * CELL - ax) / dx : Infinity;
+    let nextY = dy ? ((stepY > 0 ? gy + 1 : gy) * CELL - ay) / dy : Infinity;
+    const visited = new Set();
+    const put = (x, y) => {
+      const k = key(x, y);
+      if (visited.has(k)) return;
+      visited.add(k);
+      let entries = segs.get(k);
+      if (!entries) { entries = []; segs.set(k, entries); }
+      entries.push(segment);
+    };
+    put(gx, gy);
+    // Supercover DDA indexes only cells crossed by the real segment. A 3 km
+    // diagonal is linear in its length, rather than filling its entire square.
+    while (gx !== endX || gy !== endY) {
+      const tx = gx === endX ? Infinity : nextX, ty = gy === endY ? Infinity : nextY;
+      if (Math.abs(tx - ty) < 1e-12) {
+        put(gx + stepX, gy); put(gx, gy + stepY);
+        gx += stepX; gy += stepY; nextX += deltaX; nextY += deltaY;
+      } else if (tx < ty) { gx += stepX; nextX += deltaX; }
+      else { gy += stepY; nextY += deltaY; }
+      put(gx, gy);
     }
   };
   for (let a = 0; a < adj.length; a++) for (const [b] of adj[a]) if (a < b) addSeg(a, b);
   const nearSegs = (x, y, r) => {
-    const out = [];
+    const out = new Set();
     for (let gx = Math.floor((x - r) / CELL); gx <= Math.floor((x + r) / CELL); gx++) {
       for (let gy = Math.floor((y - r) / CELL); gy <= Math.floor((y + r) / CELL); gy++) {
-        for (const s of segs.get(key(gx, gy)) ?? []) out.push(s);
+        for (const s of segs.get(key(gx, gy)) ?? []) out.add(s);
       }
     }
     return out;

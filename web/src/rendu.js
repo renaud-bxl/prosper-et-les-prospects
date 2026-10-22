@@ -1,50 +1,17 @@
 // Le dessin d'une image : les carreaux de la ville au bon niveau de finesse, agrandis sans flou, puis ce qui bouge par-dessus.
-import { CH, LODS } from './ville.js';
+import { LODS } from './ville.js';
+import { drawIllustratedCity } from './illustrated-city.js';
 import { t as tr } from './i18n.js';
 
-/** Le niveau de finesse à utiliser pour un zoom (pixels d'écran par mètre) : le plus fin dont un pixel reste au moins un pixel d'écran. */
+/** Finest existing masks near the camera; economical masks only at city overview scale. */
 export function lodFor(z) {
-  // des pixels de ville d'au moins un pixel et demi : la ville et les robots gardent le même grain
-  for (let L = 0; L < LODS.length; L++) if (z * LODS[L] >= 1.45) return L;
-  return LODS.length - 1;
+  for (let L = LODS.length - 1; L >= 0; L--) if (z * LODS[L] <= 1.1) return L;
+  return 0;
 }
 
-/** La ville vue par la caméra { x, y (m), z (px/m) } dans une toile W × H. maxNew : combien de carreaux neufs on s'autorise à dessiner. */
+/** Real geographic geometry, drawn as smooth illustrated surfaces by the shared renderer. */
 export function drawCity(g, city, cam, W, H, tod, maxNew = Infinity) {
-  const L = lodFor(cam.z);
-  const mpp = LODS[L];
-  const z = cam.z;
-  const x0 = cam.x - W / 2 / z, y0 = cam.y - H / 2 / z;
-  const cs = CH * mpp;
-  const b = city.bounds;
-  let fresh = 0, missing = 0;
-  g.imageSmoothingEnabled = false;
-  for (let cy = Math.floor(Math.max(y0, b.miny) / cs); cy * cs < Math.min(y0 + H / z, b.maxy); cy++) {
-    for (let cx = Math.floor(Math.max(x0, b.minx) / cs); cx * cs < Math.min(x0 + W / z, b.maxx); cx++) {
-      const sx0 = Math.round((cx * cs - x0) * z), sx1 = Math.round(((cx + 1) * cs - x0) * z);
-      const sy0 = Math.round((cy * cs - y0) * z), sy1 = Math.round(((cy + 1) * cs - y0) * z);
-      if (!city.hasChunk(tod, L, cx, cy)) {
-        if (fresh >= maxNew) {
-          // pas encore dessiné : le niveau plus grossier en attendant
-          missing++;
-          const L2 = L + 1;
-          if (L2 < LODS.length) {
-            const cs2 = CH * LODS[L2];
-            const kx = Math.floor((cx * cs) / cs2), ky = Math.floor((cy * cs) / cs2);
-            if (city.hasChunk(tod, L2, kx, ky)) {
-              const c2 = city.chunk(tod, L2, kx, ky);
-              const f = cs / cs2, u = ((cx * cs) / cs2 - kx) * CH, v = ((cy * cs) / cs2 - ky) * CH;
-              g.drawImage(c2, u, v, CH * f, CH * f, sx0, sy0, sx1 - sx0, sy1 - sy0);
-            }
-          }
-          continue;
-        }
-        fresh++;
-      }
-      g.drawImage(city.chunk(tod, L, cx, cy), sx0, sy0, sx1 - sx0, sy1 - sy0);
-    }
-  }
-  return { L, fresh, missing };
+  return drawIllustratedCity(g, city, cam, W, H, tod, maxNew);
 }
 
 /** Du monde (m) à l'écran (px). */
@@ -55,37 +22,31 @@ export const toWorld = (cam, W, H, sx, sy) => [(sx - W / 2) / cam.z + cam.x, (sy
 import { ANCHOR_X, ANCHOR_Y, ROLES, robotSprite } from './robots.js';
 import { badgeSprite, hologramSprite, letterSprite, qgSprite, shadowSprite, signSprite } from './sprites.js';
 
-const ROOF = { retenu: ['#ff8a3d', '#d9622a'], pret: ['#ff8a3d', '#d9622a'], valide: ['#3ddc97', '#239a68'], lecture: ['#4fb3ff', '#2f7fc4'], ecriture: ['#a98bff', '#7a5fd0'] };
+const ROOF = { retenu: ['#b9ceb4', '#7c9b84'], pret: ['#abc9b0', '#719681'], valide: ['#8ebda0', '#5d8a70'], lecture: ['#a4c3d2', '#6e96aa'], ecriture: ['#c7bcd8', '#9887b1'] };
 
 /** La taille d'un pixel des robots à l'écran : comme la ville de près, un peu plus gros de loin (des pions de jeu). */
-export const spriteScale = (z) => Math.max(3, Math.round(z * 0.55));
+export const spriteScale = (z) => Math.max(3, z * 0.55);
 
 export function drawWorld(g, world, cam, W, H, tod, opts = {}) {
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   const city = world.city;
   const t = world.time;
   const z = cam.z;
   const L = lodFor(z);
   const tex = z * LODS[L];
   const S = opts.S ?? spriteScale(z);
-  const scr = (x, y) => [Math.round((x - cam.x) * z + W / 2), Math.round((y - cam.y) * z + H / 2)];
+  const scr = (x, y) => [(x - cam.x) * z + W / 2, (y - cam.y) * z + H / 2];
 
   // 1. les immeubles des commerces, allumés selon leur état
   for (const q of world.places.values()) {
     const col = ROOF[q.state];
     if (!col || !q.bid) continue;
-    const sil = city.silhouette(q.bid, L, col[0], col[1]);
-    if (!sil) continue;
-    const pulse = q.state === 'lecture' || q.state === 'ecriture' ? 0.42 + 0.2 * Math.sin(t * 6) : 0.5 + 0.1 * Math.sin(t * 2.2);
-    const fresh = Math.min(1, (t - q.stateAt) / 0.35);
-    const [sx, sy] = scr(sil.x0 * LODS[L], sil.y0 * LODS[L]);
-    const dw = Math.round(sil.c.width * tex), dh = Math.round(sil.c.height * tex);
-    g.globalAlpha = pulse * fresh;
-    g.drawImage(sil.c, sx, sy, dw, dh);
-    g.globalAlpha = fresh;
-    // le liseré, épais d'un pixel de robot quelle que soit la finesse de la ville
-    const o = Math.max(1, Math.round(S / 2));
-    for (const [dx, dy] of [[0, 0], [o, 0], [-o, 0], [0, o], [0, -o]]) g.drawImage(sil.e, sx + dx, sy + dy, dw, dh);
-    g.globalAlpha = 1;
+    const building=city.blist[q.bid-1];if(!building)continue;
+    const pulse=q.state==='lecture'||q.state==='ecriture'?.42+.2*Math.sin(t*6):.5;
+    g.save();g.globalAlpha=pulse*Math.min(1,(t-q.stateAt)/.35);g.fillStyle=col[0];g.strokeStyle=col[1];g.lineWidth=Math.max(1,S*.4);g.lineJoin='round';
+    const lift=Math.max(1.5,Math.min(18,building.h*.45));
+    for(const rings of building.parts){g.beginPath();for(const ring of rings){for(let i=0;i<ring.length;i++){const [x,y]=scr(ring[i][0],ring[i][1]-lift);if(i===0)g.moveTo(x,y);else g.lineTo(x,y);}g.closePath();}g.fill('evenodd');g.stroke();}
+    g.restore();
   }
 
   // l'onde de l'éclaireur : un anneau qui part du QG, la ville se découvre derrière lui
@@ -138,10 +99,10 @@ export function drawWorld(g, world, cam, W, H, tod, opts = {}) {
       while (next <= d + l && next <= traced) {
         const u = (next - d) / (l || 1);
         const [sx, sy] = scr(ax + (bx - ax) * u, ay + (by - ay) * u);
-        g.fillStyle = '#15121d';
-        g.fillRect(sx - S * 1.5, sy - S * 1.5, S * 3, S * 3);
+        g.fillStyle = '#fffaf0b0';
+        g.beginPath(); g.arc(sx, sy, S * 1.4, 0, Math.PI * 2); g.fill();
         g.fillStyle = col;
-        g.fillRect(sx - S, sy - S, S * 2, S * 2);
+        g.beginPath(); g.arc(sx, sy, S * .9, 0, Math.PI * 2); g.fill();
         next += step;
       }
       d += l; i++;
@@ -150,9 +111,9 @@ export function drawWorld(g, world, cam, W, H, tod, opts = {}) {
       // la tête du tracé : un point lumineux qui file
       const [hx, hy] = scr(head[0], head[1]);
       g.fillStyle = '#ffffff';
-      g.fillRect(hx - S * 2, hy - S * 2, S * 4, S * 4);
+      g.beginPath(); g.arc(hx, hy, S * 1.8, 0, Math.PI * 2); g.fill();
       g.fillStyle = col;
-      g.fillRect(hx - S, hy - S, S * 2, S * 2);
+      g.beginPath(); g.arc(hx, hy, S, 0, Math.PI * 2); g.fill();
     }
   }
   // la trace en vol de l'éclaireur vers le commerce qu'il va marquer
@@ -201,8 +162,7 @@ function drawQG(g, world, scr, z, tod, S) {
   const sp = qgSprite(tod);
   const k = z * 0.5; // le QG est dessiné à l'échelle de la ville la plus fine
   const [sx, sy] = scr(q.x0, q.y0 + q.d);
-  const w = sp.c.width * k, h = sp.c.height * k;
-  g.drawImage(sp.c, Math.round(sx - sp.ax * k), Math.round(sy - sp.ay * k), Math.round(w), Math.round(h));
+  drawSprite(g, sp.c, sx, sy, sp.ax, sp.ay, k);
   if (z < 1.6) {
     // de loin, un repère : la tête du robot dans une bulle orange
     const [px, py] = scr(q.x, q.y0);
@@ -226,7 +186,7 @@ function drawPlace(g, world, q, scr, S, t) {
   const scale = age < 0.18 ? 0.4 + (age / 0.18) * 0.75 : age < 0.3 ? 1.15 - ((age - 0.18) / 0.12) * 0.15 : 1;
   const small = b.small ? 0.8 : 1;
   const Sx = S * scale * small;
-  g.drawImage(b.c, Math.round(sx - b.ax * Sx), Math.round(sy - (lift + pop) * S - b.ay * Sx), Math.round(b.c.width * Sx), Math.round(b.c.height * Sx));
+  drawSprite(g, b.c, sx, sy - (lift + pop) * S, b.ax, b.ay, Sx);
   // ce que le lecteur voit sur le site, et ce qui manque au commerce
   const since = q.doneAt != null ? t - q.doneAt : null;
   if (S >= 3 && (q.state === 'lecture' || (since != null && since < 2.6))) {
@@ -237,7 +197,7 @@ function drawPlace(g, world, q, scr, S, t) {
     const a = since != null && since > 2.1 ? Math.max(0, 1 - (since - 2.1) / 0.5) : Math.min(1, (t - q.stateAt) / 0.2);
     const hs = Math.max(2, S - 1);
     g.globalAlpha = a;
-    g.drawImage(h.c, Math.round(sx - h.ax * hs), Math.round(sy - 34 * S - h.ay * hs), h.c.width * hs, h.c.height * hs);
+    drawSprite(g, h.c, sx, sy - 34 * S, h.ax, h.ay, hs);
     g.globalAlpha = 1;
   }
 }
@@ -269,7 +229,7 @@ function drawActor(g, a, scr, S, t) {
   // l'ombre au sol (plus petite quand l'éclaireur vole haut)
   const sh = shadowSprite(a.alt > 3 ? 10 : 14);
   drawSprite(g, sh.c, sx, sy, sh.ax, sh.ay, S);
-  const sp = robotSprite(a.role, a.pose, a.dir, a.frame, a.eyes);
+  const sp = robotSprite(a.role, a.pose, a.dir, a.frame, a.bubble ? 'talk' : a.eyes, { id: a.id, name: a.name, time: t });
   const alt = Math.round(a.alt * 2 * (S / 2)); // un mètre d'altitude = deux pixels du robot
   drawSprite(g, sp, sx, sy - alt, ANCHOR_X, ANCHOR_Y, S);
   g.globalAlpha = 1;
@@ -282,11 +242,11 @@ function drawFx(g, world, f, scr, S, t, opts) {
     g.strokeStyle = `rgba(255,201,61,${1 - u})`;
     g.lineWidth = S;
     const r = (4 + u * 18) * S;
-    g.strokeRect(Math.round(sx - r), Math.round(sy - r * 0.6 - 10 * S), Math.round(r * 2), Math.round(r * 1.2));
+    g.beginPath(); g.ellipse(sx, sy - 10 * S, r, r * .6, 0, 0, Math.PI * 2); g.stroke();
   } else if (f.kind === 'dust') {
     g.fillStyle = `rgba(220,210,230,${0.5 * (1 - u)})`;
     const r = (1 + u * 2) * S;
-    g.fillRect(Math.round(sx - r + f.vx * u * 6 * S), Math.round(sy - r - u * 3 * S), Math.round(r * 2), Math.round(r * 2));
+    g.beginPath(); g.ellipse(sx + f.vx * u * 6 * S, sy - u * 3 * S, r, r * .6, 0, 0, Math.PI * 2); g.fill();
   } else if (f.kind === 'letter') {
     // la lettre monte et file vers la file de validation (en haut à droite)
     const sp = letterSprite();
@@ -298,6 +258,7 @@ function drawFx(g, world, f, scr, S, t, opts) {
 }
 
 function drawSprite(g, c, x, y, ax, ay, S) {
-  g.drawImage(c, Math.round(x - ax * S), Math.round(y - ay * S), c.width * S, c.height * S);
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+  g.drawImage(c, x - ax * S, y - ay * S, (c.logicalWidth ?? c.width) * S, (c.logicalHeight ?? c.height) * S);
 }
 

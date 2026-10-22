@@ -6,7 +6,7 @@ Projet Node.js ESM local, interface Canvas/Vite, base SQLite. Compatible dévelo
 
 - Nom exact : Prosper et les prospects. Le chef s’appelle Prosper. Application sœur : Oscar et les agents.
 - Périmètre : Belgique, Pays-Bas, Luxembourg. Interface et mails FR/NL/EN, avec réglages de langue indépendants.
-- Préserver robots animés, rues et bâtiments réels, trajets, scan, fiches et rejeu.
+- Préserver personnages animés, rues et bâtiments réels, trajets, scan, fiches et rejeu.
 - Thèmes clair/nuit alignés sur Oscar ; pas de filtre d’inversion global.
 - Aucun envoi de mail automatique. Valider conserve une décision locale.
 - Ne jamais inventer contacts, observations de site ou résultats de mission. Un échec de moteur doit rester visible.

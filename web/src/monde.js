@@ -115,17 +115,17 @@ export class Monde {
     this.fx = [];
     const q = this.qg;
     const spot = (k) => [q.x + k * 4.8, q.door[1] + 11 + Math.abs(k) * 0.5];
-    const homes = { chef: spot(0), 'redacteur-1': spot(-1.6), 'redacteur-2': spot(1.6), 'lecteur-1': spot(-3), 'lecteur-2': spot(3), 'lecteur-3': spot(-4.4), eclaireur: [q.pad[0], q.pad[1]] };
+    const homes = { chef: spot(0), 'redacteur-1': spot(-1.6), 'redacteur-2': spot(1.6), 'lecteur-1': spot(-3), 'lecteur-2': spot(3), 'lecteur-3': spot(-4.4), eclaireur: spot(4.4) };
     for (const id of Object.keys(TEAM)) {
       const [x, y] = homes[id];
       const a = new Actor(id, x, y);
       a.world = this;
       a.home = [x, y];
-      if (id === 'eclaireur') { a.alt = q.padAlt; a.dir = 'down'; }
+      if (id === 'eclaireur') { a.alt = 0; a.dir = 'down'; }
       // au départ, toute l'équipe est à l'intérieur ; Prosper sort le premier
-      a.alpha = id === 'eclaireur' ? 1 : 0;
-      a.x = id === 'eclaireur' ? x : q.door[0]; a.y = id === 'eclaireur' ? y : q.door[1];
-      a.inside = id === 'eclaireur' ? null : 'qg';
+      a.alpha = 0;
+      a.x = q.door[0]; a.y = q.door[1];
+      a.inside = 'qg';
       this.actors.set(id, a);
     }
     this.mission = null;
@@ -240,7 +240,7 @@ export class Monde {
           { t: 'wait', ms: 900, dir: 'down' }, { t: 'call', fn: () => { this.introDone = true; } });
         // le reste de l'équipe sort derrière lui
         let k = 0;
-        for (const id of ['redacteur-1', 'redacteur-2', 'lecteur-1', 'lecteur-2', 'lecteur-3']) {
+        for (const id of ['redacteur-1', 'redacteur-2', 'lecteur-1', 'lecteur-2', 'lecteur-3','eclaireur']) {
           const b = this.actors.get(id);
           b.tasks.unshift({ t: 'wait', ms: 700 + k++ * 260 }, { t: 'exit' }, { t: 'go', to: b.home, dur: 0.55 }, { t: 'wait', ms: 120, dir: 'down' });
         }
@@ -258,7 +258,7 @@ export class Monde {
         const texte = d.texte.replace(/ indépendants sur la carte, j'en garde /, ' sur la carte, j’en garde ');
         if (!a.flying) {
           a.do({ t: 'until', fn: () => this.introDone }, { t: 'call', fn: () => { a.say(tr('Je scanne la ville…'), 1600, '', 2); a.status = tr('Scanne la ville'); } },
-            { t: 'fly', to: [this.qg.x, this.qg.y - 4], alt: 30, dur: 0.9 },
+            { t: 'wait', ms: 800, pose: 'carry', dir:'down' },
             { t: 'call', fn: () => { a.flying = true; this.scan = { x: this.qg.x, y: this.qg.y, t0: this.time, speed: 520, r: 0 }; W.emit('scan', this.scan); } });
         } else a.do({ t: 'call', fn: () => { this.journal.push({ who: a.id, texte }); } });
       }
@@ -285,8 +285,8 @@ export class Monde {
             if (this.mission) Object.assign(this.mission, { trouves: n, demandes: d.demandes ?? this.mission.nombre, rayon: d.rayon ?? this.mission.rayon });
             this.emit('scouted', { trouves: n, demandes: d.demandes, rayon: d.rayon });
           } },
-          { t: 'wait', ms: 700, pose: 'fly' },
-          { t: 'fly', to: this.qg.pad, alt: this.qg.padAlt, dur: 0.9 },
+          { t: 'wait', ms: 700, pose: 'stand' },
+          { t: 'go', to: a.home, dur: 0.9 },
           { t: 'call', fn: () => { a.flying = false; a.status = tr('Au QG'); } });
         // Prosper envoie les lecteurs quand l'éclaireur a fini (ou tout de suite s'il en a déjà trouvé et que ça traîne)
         this.later(1.5, () => {

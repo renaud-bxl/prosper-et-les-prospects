@@ -1,3 +1,5 @@
+import { createResultsDialog } from './results.js';
+import './results.css';
 import { t, getLang, setLang } from './i18n.js';
 import { l } from './i18n-launch.js';
 import { initTheme } from './theme.js';
@@ -32,6 +34,10 @@ $('loading').textContent=l('loading');
 const updateUI=createUpdateUI({root:$('updates'), getLang});
 const updateButton=document.createElement('button');updateButton.type='button';updateButton.textContent=l('updates');updateButton.addEventListener('click',()=>{updateUI.open();});$('updates').prepend(updateButton);
 
+let deferredReplay=null;
+const results=createResultsDialog({onClose:()=>{if(deferredReplay){const id=deferredReplay;deferredReplay=null;replay(id).catch(showError);}}});
+let latestResultRun=null;
+const resultButton=document.createElement('button');resultButton.type='button';resultButton.textContent=({fr:'Résultats',nl:'Resultaten',en:'Results'})[getLang()];resultButton.addEventListener('click',()=>results.open(runId??latestResultRun));document.querySelector('.app-controls').append(resultButton);
 const canvas = $('world');
 const g = canvas.getContext('2d');
 const params = new URLSearchParams(location.search);
@@ -75,6 +81,7 @@ function setMode(m) {
 
 /* ------------------------------------------------------------------ une image */
 function frame(dt) {
+  if(results.isOpen)return;
   if(animationPaused)dt=0;
   if (pre) {
     // l'ouverture du film : la France, puis on plonge sur la ville
@@ -99,6 +106,7 @@ function frame(dt) {
   if (cine && mode === 'ville') cine.update(W, H, DPR);
   if (mode === 'carte' || mode === 'plongee') carte.draw(g, W, H, DPR);
   if (mode === 'ville' && city) {
+    const b=city.bounds;cam.z=Math.max(cam.z,W/(b.maxx-b.minx),H/(b.maxy-b.miny));const hw=W/(2*cam.z),hh=H/(2*cam.z);cam.x=Math.max(b.minx+hw,Math.min(b.maxx-hw,cam.x));cam.y=Math.max(b.miny+hh,Math.min(b.maxy-hh,cam.y));
     g.fillStyle = palette(tod).bg;
     g.fillRect(0, 0, W, H);
     drawCity(g, city, cam, W, H, tod, window.__CAPTURE ? Infinity : 6);
@@ -137,7 +145,7 @@ async function buildCity(centre, rayon) {
   $('loading').hidden = false;
   $('loading').textContent = l('loading');
   const t0 = performance.now();
-  city = await loadCity({ centre, radius: Math.min(4300, Math.max(1600, rayon + 300)), onProgress: (k) => { $('loading').textContent = l('loadingPct',{n:Math.round(k*100)}); } });
+  city = await loadCity({ centre, radius: Math.min(8500, Math.max(6500, rayon + 900)), onProgress: (k) => { $('loading').textContent = l('loadingPct',{n:Math.round(k*100)}); } });
   world = new Monde(city);
   director = new Realisateur(world, cam);
   hud = createHud($('hud'), world);
@@ -185,7 +193,7 @@ async function cinema(id) {
   const to = { ...carte.cam };
   const [tx, ty] = [(qlon + 180) / 360, (1 - Math.log(Math.tan(qlat * Math.PI / 180) + 1 / Math.cos(qlat * Math.PI / 180)) / Math.PI) / 2];
   // le vol finit assez bas pour que la ville couvre tout l'écran au moment du passage (sinon, un carré sur fond noir)
-  const side = 2 * Math.min(4300, Math.max(1600, (run.rayon ?? sd?.rayon ?? 2200) + 300)) * 0.8;
+  const side = 2 * Math.min(8500, Math.max(6500, (run.rayon ?? sd?.rayon ?? 2200) + 900)) * 0.8;
   const zEnd = Math.log2((W / DPR) * 40075016.686 * Math.cos(qlat * Math.PI / 180) / (256 * side));
   pre = { t: 0, wait: params.has('attente'), dur: Number(params.get('ouverture') ?? 4.6), from: { x: (4.9+180)/360, y: (1-Math.log(Math.tan(51.45*Math.PI/180)+1/Math.cos(51.45*Math.PI/180))/Math.PI)/2, zoom: 7 }, to: { x: tx, y: ty, zoom: Math.max(13.4, zEnd) } };
   Object.assign(carte.cam, pre.from);
@@ -271,7 +279,8 @@ function connect() {
       deliver(e);
       const status=$('mission-status');
       if(e.type==='error') {status.hidden=false;status.className='error';status.textContent=t(e.data?.message ?? l('failed'));}
-      if(e.agent==='chef' && e.type==='end') {status.hidden=false;status.className=e.data?.erreur?'error':'done';status.textContent=l(e.data?.erreur?'failed':'completed');}
+      if(e.agent==='chef' && e.type==='drafts:start' && world) world.writeGo=true;
+      if(e.agent==='chef' && e.type==='end') {results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':'done';status.textContent=l(e.data?.erreur?'failed':'completed');}
     }
   };
 }
@@ -417,8 +426,11 @@ $('hud').addEventListener('click',shortcut);$('hud').addEventListener('keydown',
 /* ------------------------------------------------------------------ le départ */
 async function boot() {
   resize();
+  const asked = params.get('run');
   const st = await fetch('/api/state').then((r) => r.json()).catch(() => ({}));
   config = st.config ?? {};
+  latestResultRun=st.run?.id??null;
+  const showingResults=!CINE && st.run && !st.running && ['fini','erreur'].includes(st.run.status) ? await results.autoOpen(asked ?? st.run.id).catch(()=>false) : false;
   lanc = createLancement($('launch'), {
     config,
     onLaunch: launch,
@@ -426,8 +438,7 @@ async function boot() {
     onReplay: async () => replay(await biggestRun()),
   });
   connect();
-  const asked = params.get('run');
-  setMode(asked || CINE ? 'plongee' : 'carte');
+  setMode((asked || CINE) && !showingResults ? 'plongee' : 'carte');
   if (!window.__CAPTURE) requestAnimationFrame(loop);
   window.__qg.ready = true;
   if (CINE) await cinema(params.get('cinema') || asked || (await biggestRun()));
@@ -439,7 +450,7 @@ async function boot() {
     setMode('plongee'); await buildCity(centre,st.run.rayon ?? 2000); enterCity();
     for(const event of buffer.splice(0)) world.push(event);
   }
-  else if (asked) await replay(asked);
+  else if (asked) {if(showingResults){deferredReplay=asked;runId=asked;}else await replay(asked);}
   window.__qg.loaded = true;
 }
 
@@ -464,5 +475,6 @@ window.__qg = {
   step(dt) { resize(); frame(dt); },
   render() { resize(); frame(0); },
 };
-boot().catch(e=>{ $('loading').hidden=true; $('mission-status').hidden=false; $('mission-status').className='error'; $('mission-status').textContent=l('networkError')+' '+t(e.message); });
+function showError(e){$('loading').hidden=true;$('mission-status').hidden=false;$('mission-status').className='error';$('mission-status').textContent=l('networkError')+' '+t(e.message);}
+boot().catch(showError);
 

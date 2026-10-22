@@ -12,9 +12,10 @@ const capital = (s) => String(s ?? '').replace(/^./, (c) => c.toUpperCase());
 function icon(state, scale = 3) {
   const b = badgeSprite(state);
   const c = document.createElement('canvas');
-  c.width = b.c.width * scale; c.height = b.c.height * scale;
+  const density = Math.min(3, globalThis.devicePixelRatio || 1);
+  c.width = Math.ceil((b.c.logicalWidth ?? b.c.width) * scale * density); c.height = Math.ceil((b.c.logicalHeight ?? b.c.height) * scale * density);
   const g = c.getContext('2d');
-  g.imageSmoothingEnabled = false;
+  g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
   g.drawImage(b.c, 0, 0, c.width, c.height);
   return c;
 }
@@ -53,7 +54,7 @@ export function createHud(root, world) {
     el.className = 'pf';
     el.dataset.actor=id;el.tabIndex=0;el.setAttribute('role','button');el.setAttribute('aria-label',tr('Suivre {nom}',{nom:info.name}));
     el.style.setProperty('--c', ROLES[info.role].color);
-    const face = portrait(info.role, 'open', 3);
+    const face = portrait(info.role, 'open', 3, info.name);
     face.className = 'pf-face';
     el.append(face);
     el.insertAdjacentHTML('beforeend', `<div class="pf-txt"><b>${esc(info.name)}</b><span class="pf-role">${esc(capital(tr(info.label)))}</span><span class="pf-st"></span></div>`);
@@ -173,7 +174,7 @@ export function createHud(root, world) {
         radio.dataset.key = key;
         radio.style.setProperty('--c', ROLES[onAir.role].color);
         const face = radio.querySelector('.rd-face');
-        face.replaceChildren(portrait(onAir.role, 'open', 4));
+        face.replaceChildren(portrait(onAir.role, 'open', 4, onAir.name));
         radio.querySelector('.rd-name').textContent = `${onAir.name} · radio`;
         radio.querySelector('.rd-text').textContent = onAir.bubble.text;
         radio.hidden = false;

@@ -5,7 +5,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync, renameSync } from '
 import { join, extname } from 'node:path';
 import { ROOT, loadConfig, GOOGLE_KEY } from './env.mjs';
 import { lastRun, getRun, listRuns, listPlaces, listEvents, getPlace, updatePlace } from './db.mjs';
-import { bus, lancer, decider, isRunning, visiter } from './chef.mjs';
+import { bus, lancer, decider, isRunning, isDraftRunning, visiter, lancerBrouillons, statutBrouillons } from './chef.mjs';
 import { localiser } from './agents/eclaireur.mjs';
 import { villeOSM } from './agents/carte.mjs';
 import { capacitesMoteurs } from './agents/moteurs.mjs';
@@ -29,7 +29,7 @@ async function readBody(req) {
 
 function snapshot(runId) {
   const run = runId ? getRun(runId) : lastRun();
-  return { run, running: isRunning(), places: run ? listPlaces(run.id) : [], config: publicConfig() };
+  return { run, running: isRunning(), places: run ? listPlaces(run.id) : [], draftJob: run ? statutBrouillons(run.id) : null, config: publicConfig() };
 }
 
 function publicConfig() {
@@ -85,6 +85,19 @@ async function api(req, res, url) {
   const ev = pathname.match(/^\/api\/runs\/([\w-]+)\/events$/);
   if (ev && req.method === 'GET') return json(res, 200, listEvents(ev[1]));
 
+  const runPlaces = pathname.match(/^\/api\/runs\/([\w-]+)\/places$/);
+  if (runPlaces && req.method === 'GET') {
+    if (!getRun(runPlaces[1])) return json(res, 404, { code: 'run_not_found', error: 'Mission inconnue.' });
+    return json(res, 200, listPlaces(runPlaces[1]));
+  }
+  const drafts = pathname.match(/^\/api\/runs\/([\w-]+)\/drafts$/);
+  if (drafts && ['GET', 'POST'].includes(req.method)) {
+    if (!getRun(drafts[1])) return json(res, 404, { code: 'run_not_found', error: 'Mission inconnue.' });
+    if (req.method === 'GET') return json(res, 200, statutBrouillons(drafts[1]));
+    try { return json(res, 202, lancerBrouillons(drafts[1], await readBody(req))); }
+    catch (error) { return json(res, error.status ?? 400, { code: error.code ?? 'invalid_request', error: error.message }); }
+  }
+
   if (pathname === '/api/run' && req.method === 'POST') {
     const body = await readBody(req);
     const config = loadConfig();
@@ -120,6 +133,7 @@ async function api(req, res, url) {
   // Un commerce cliqué sur la carte du QG : un lecteur va le voir (les gestes arrivent dans le flux en direct).
   const vis = pathname.match(/^\/api\/runs\/([\w-]+)\/visite$/);
   if (vis && req.method === 'POST') {
+    if (isDraftRunning()) return json(res, 409, { code: 'drafts_active', error: 'Une rédaction est déjà en cours.' });
     const body = await readBody(req);
     if (!body.name || !Number.isFinite(+body.lat) || !Number.isFinite(+body.lon)) return json(res, 400, { error: 'commerce incomplet' });
     if (!countryAt(+body.lat,+body.lon)) return json(res,400,{error:'Commerce hors Benelux.'});

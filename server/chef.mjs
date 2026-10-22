@@ -1,7 +1,7 @@
 // Le chef d'équipe : lance l'éclaireur, distribue le travail aux lecteurs puis aux rédacteurs,
 // et raconte chaque geste sous forme d'événements (enregistrés pour pouvoir rejouer une session).
 import { EventEmitter } from 'node:events';
-import { db, upsertPlace, updatePlace, getPlace, insertEvent } from './db.mjs';
+import { db, upsertPlace, updatePlace, getPlace, getRun, listPlaces, insertEvent } from './db.mjs';
 import { eclairer, CHAINES } from './agents/eclaireur.mjs';
 import { eclairerOSM, overpass } from './agents/carte.mjs';
 import { lire, noter } from './agents/lecteur.mjs';
@@ -9,7 +9,11 @@ import { rediger } from './agents/redacteur.mjs';
 import { ficheGoogle } from './agents/google.mjs';
 import { countryAt } from './benelux.mjs';
 import { randomUUID } from 'node:crypto';
-import { GOOGLE_KEY } from './env.mjs';
+import { writeFileSync, renameSync } from 'node:fs';
+import { join } from 'node:path';
+import { GOOGLE_KEY, ROOT, loadConfig } from './env.mjs';
+import { createDraftSessions } from './redaction-session.mjs';
+import { isUpdating } from './updates.mjs';
 
 export const bus = new EventEmitter();
 bus.setMaxListeners(50);
@@ -40,7 +44,21 @@ class Queue {
   }
 }
 
-export function isRunning() { return Boolean(current) || activeVisits > 0; }
+const draftSessions = createDraftSessions({
+  getRun, listPlaces, getPlace, updatePlace, rediger, emit, loadConfig,
+  isMissionRunning: () => Boolean(current) || activeVisits > 0,
+  isUpdating,
+  saveConfig(config) {
+    const temporary = join(ROOT, 'config.json.tmp');
+    writeFileSync(temporary, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+    renameSync(temporary, join(ROOT, 'config.json'));
+  },
+});
+
+export function isRunning() { return Boolean(current) || activeVisits > 0 || draftSessions.isRunning(); }
+export const isDraftRunning = draftSessions.isRunning;
+export const lancerBrouillons = draftSessions.start;
+export const statutBrouillons = draftSessions.getJob;
 
 export async function lancer(config) {
   if (isRunning()) throw new Error('Une session tourne déjà.');
@@ -183,6 +201,7 @@ export function decider(runId, placeId, decision, edits = {}) {
  * son site et le note ; s'il est intéressant, un rédacteur lui écrit. Les gestes s'ajoutent à la mission ouverte.
  */
 export async function visiter(runId, poi, config) {
+  if (draftSessions.isRunning() || isUpdating()) throw new Error('Une rédaction ou une mise à jour est en cours.');
   activeVisits++;
   try {
   const { offre, equipe } = config;

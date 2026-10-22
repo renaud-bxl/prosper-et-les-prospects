@@ -42,7 +42,7 @@ function icon(state) {
   const c = document.createElement('canvas');
   c.width = b.c.width * 3; c.height = b.c.height * 3;
   const g = c.getContext('2d');
-  g.imageSmoothingEnabled = false;
+  g.imageSmoothingEnabled = true;g.imageSmoothingQuality='high';
   g.drawImage(b.c, 0, 0, c.width, c.height);
   return c;
 }
