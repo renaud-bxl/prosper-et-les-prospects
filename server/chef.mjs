@@ -16,6 +16,7 @@ import { isUpdating } from './updates.mjs';
 import { erreurRedaction, signauxRedaction } from './redaction-recovery.mjs';
 import { objectifsMission, runMissionPipeline, verifierDisponibiliteMission } from './mission-pipeline.mjs';
 import { resumerEvenements, bilanReprise } from './mission-summary.mjs';
+import { configReprise, peutReprendre } from './mission-resume.mjs';
 
 export const bus = new EventEmitter();
 bus.setMaxListeners(50);
@@ -72,15 +73,40 @@ export async function lancer(config) {
     .run(runId, recherche.metier, recherche.ville, Date.now(), 'en_cours', recherche.centre.lat, recherche.centre.lon,
       recherche.rayon_m ?? 2200, targets.objectif_contacts, recherche.pays ?? null);
   current = { runId };
+  try {
   emit(runId, 'chef', 'start', null, {
     metier: recherche.metier, ville: recherche.ville, centre: recherche.centre, nombre: targets.objectif_contacts,
     rayon: recherche.rayon_m ?? 2200, pays: recherche.pays ?? null, ...targets,
     score_minimum: Number(config.equipe?.score_minimum ?? 60), redaction_active: targets.objectif_mails > 0, veut: recherche.veut ?? { emails: true, telephones: true }, offre: config.offre?.ce_que_je_vends ?? null,
   });
+  executerMission(runId, config);
+  return runId;
+  } catch(error){current=null;throw error;}
+}
+
+export function missionReprenable(runId) {const run=getRun(runId);return peutReprendre(run,resumeMission(runId),isRunning()||isUpdating());}
+export async function reprendreMission(runId) {
+  verifierDisponibiliteMission({running:isRunning(),updating:isUpdating()});
+  const run=getRun(runId);
+  if(!run)throw Object.assign(new Error('Mission inconnue.'),{code:'run_not_found'});
+  const config=configReprise(run,resumeMission(runId),loadConfig());
+  const initialPlaces=listPlaces(runId);
+  verifierDisponibiliteMission({running:isRunning(),updating:isUpdating()});
+  current={runId};
+  try {
+  db.prepare('UPDATE runs SET status = ?, ended_at = NULL WHERE id = ?').run('en_cours',runId);
+  emit(runId,'chef','resume',null,{...objectifsMission(config),commerces_conserves:initialPlaces.length});
+  executerMission(runId,config,initialPlaces);
+  return runId;
+  }catch(error){current=null;throw error;}
+}
+function executerMission(runId, config, initialPlaces=[]) {
+  const {recherche}=config,targets=objectifsMission(config);
   (async () => {
     try {
       const search = recherche.source === 'google' ? eclairer : eclairerOSM;
       const outcome = await runMissionPipeline(config, {
+        initialPlaces,
         discover: (request, options) => search(request, { ...options, exclure: CHAINES }),
         read: lire, score: noter, write: rediger,
         allowed(place) { const cc = countryAt(place.lat, place.lon); if (!cc) return false; place.pays = cc; return true; },
@@ -103,8 +129,7 @@ export async function lancer(config) {
     // Observer ce dernier rejet garde le serveur vivant, sans exposer de données de la mission.
     console.error('Le bilan de la mission ne peut pas être enregistré. Vérifiez le dossier de données local.');
   });
-  return runId;
-}
+ }
 export function decider(runId, placeId, decision, edits = {}) {
   const place = getPlace(runId, placeId);
   if (!place) throw new Error('Commerce inconnu.');

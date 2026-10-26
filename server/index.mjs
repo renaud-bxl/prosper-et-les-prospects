@@ -5,7 +5,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync, renameSync } from '
 import { join, extname } from 'node:path';
 import { ROOT, loadConfig, GOOGLE_KEY } from './env.mjs';
 import { lastRun, getRun, listRuns, listPlaces, listEvents, getPlace, updatePlace } from './db.mjs';
-import { bus, lancer, decider, isRunning, isDraftRunning, visiter, lancerBrouillons, statutBrouillons, resumeMission } from './chef.mjs';
+import { bus, lancer, decider, isRunning, isDraftRunning, visiter, lancerBrouillons, statutBrouillons, resumeMission, reprendreMission, missionReprenable } from './chef.mjs';
 import { localiser } from './agents/eclaireur.mjs';
 import { villeOSM } from './agents/carte.mjs';
 import { capacitesMoteurs } from './agents/moteurs.mjs';
@@ -30,7 +30,7 @@ async function readBody(req) {
 
 function snapshot(runId) {
   const run = runId ? getRun(runId) : lastRun();
-  return { run, running: isRunning(), places: run ? listPlaces(run.id) : [], draftJob: run ? statutBrouillons(run.id) : null, summary: run ? resumeMission(run.id) : null, config: publicConfig() };
+  return { run, running: isRunning(), places: run ? listPlaces(run.id) : [], draftJob: run ? statutBrouillons(run.id) : null, summary: run ? resumeMission(run.id) : null, resumable: run ? missionReprenable(run.id) : false, config: publicConfig() };
 }
 
 function publicConfig() {
@@ -90,6 +90,11 @@ async function api(req, res, url) {
   if (runPlaces && req.method === 'GET') {
     if (!getRun(runPlaces[1])) return json(res, 404, { code: 'run_not_found', error: 'Mission inconnue.' });
     return json(res, 200, listPlaces(runPlaces[1]));
+  }
+  const resume = pathname.match(/^\/api\/runs\/([\w-]+)\/resume$/);
+  if(resume && req.method==='POST') {
+    try {return json(res,202,{runId:await reprendreMission(resume[1])});}
+    catch(error){return json(res,409,{code:error.code??'resume_failed',error:error.message});}
   }
   const drafts = pathname.match(/^\/api\/runs\/([\w-]+)\/drafts$/);
   if (drafts && ['GET', 'POST'].includes(req.method)) {

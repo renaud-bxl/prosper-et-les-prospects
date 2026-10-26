@@ -49,6 +49,12 @@ Pour préciser un dossier macOS/Linux dès le départ tout en conservant la conf
 curl -fsSL https://raw.githubusercontent.com/renaud-bxl/prosper-et-les-prospects/main/install.sh | sh -s -- --dir "/chemin/absolu/Prosper et les prospects"
 ```
 
+## Reprendre une mission
+
+Après un arrêt du logiciel, les commerces et les mails déjà enregistrés restent dans la base locale. Si les objectifs de la mission sont connus, le bouton **Reprendre la mission** continue cette même mission : les commerces non terminés repartent en lecture, les mails manquants sont préparés, puis la recherche se poursuit si nécessaire. Les brouillons existants et les décisions sont conservés. Une mission active ne peut pas être relancée en parallèle.
+
+Chaque site est analysé dans un travailleur isolé avec un délai maximal ; une page qui dépasse ce délai est signalée sur sa fiche et ne bloque pas le reste de l’équipe.
+
 ## Première mission
 
 1. Choisissez la langue de l’interface et le thème clair/nuit.

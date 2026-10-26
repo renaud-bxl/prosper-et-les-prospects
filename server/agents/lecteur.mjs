@@ -2,7 +2,9 @@
 // relève l'adresse de contact affichée et les signaux utiles (réservation en ligne, discussion, WhatsApp…).
 
 import { isIP } from 'node:net';
-import { fetchPublic, isPublicAddress } from './public-web.mjs';
+import { fetchPublic, isPublicAddress, attendreAvecSignal } from './public-web.mjs';
+import { Worker } from 'node:worker_threads';
+import { htmlTags, htmlElements, htmlLinks, visibleHtmlText } from './html-scan.mjs';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
 const MAX_BYTES = 1_500_000;
@@ -27,44 +29,33 @@ const FREEMAIL = /^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|icloud|me|or
 const EMAIL_RE = /[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}/gi;
 const EMAIL_JUNK = /\.(png|jpe?g|gif|webp|svg|avif)$|@(sentry|wixpress|example|domain|email|sentry-next)\.|^(noreply|no-reply|nepasrepondre|u0|user|name|nom|votre|your)@|@2x/i;
 
-async function getHtml(url, { resolver, fetchImpl } = {}) {
+async function getHtml(url, { resolver, fetchImpl, signal: siteSignal, requestTimeoutMs = 10000 } = {}) {
+  const requestSignal = AbortSignal.timeout(Math.min(10000, Math.max(10, Math.floor(requestTimeoutMs))));
+  const signal = siteSignal ? AbortSignal.any([siteSignal, requestSignal]) : requestSignal;
   const { response: res, finalUrl } = await fetchPublic(url, {
     resolver, fetchImpl,
     headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'fr-BE,fr;q=0.9,nl;q=0.8,en;q=0.7' },
-    signal: AbortSignal.timeout(10000),
+    signal,
   });
   const type = res.headers.get('content-type') ?? '';
-  if (!res.ok || !/html/i.test(type)) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok || !/html/i.test(type)) { res.body?.cancel().catch(() => {}); throw new Error(`HTTP ${res.status}`); }
   const reader = res.body.getReader();
   const chunks = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.length;
-    chunks.push(value);
-    if (size > MAX_BYTES) { reader.cancel().catch(() => {}); break; }
-  }
+  try {
+    for (;;) {
+      const { done, value } = await attendreAvecSignal(() => reader.read(), signal);
+      if (done) break;
+      const remaining = MAX_BYTES - size;
+      chunks.push(value.subarray(0, remaining)); size += Math.min(value.length, remaining);
+      if (size >= MAX_BYTES) { reader.cancel().catch(() => {}); break; }
+    }
+  } finally { if (signal.aborted) reader.cancel().catch(() => {}); reader.releaseLock(); }
   return { html: Buffer.concat(chunks).toString('utf8'), finalUrl };
 }
 
-function visibleText(html) {
-  return html
-    .replace(/<(script|style|noscript|svg|template)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|section|article)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&#039;|&rsquo;|&#8217;/g, '’').replace(/&eacute;/g, 'é')
-    .replace(/&egrave;/g, 'è').replace(/&agrave;/g, 'à').replace(/&ccedil;/g, 'ç').replace(/&ocirc;/g, 'ô').replace(/&quot;/g, '"')
-    .replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
-}
-
-function links(html, base) {
-  const out = [];
-  for (const m of html.matchAll(/<a\s[^>]*href\s*=\s*["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
-    try { out.push({ url: new URL(m[1].trim(), base).href, text: m[2].replace(/<[^>]+>/g, ' ').trim().toLowerCase() }); } catch {}
-  }
-  return out;
-}
+const visibleText = visibleHtmlText;
+const links = htmlLinks;
 
 // Décode les entités HTML (&#064; &#x40; …) et les adresses protégées par Cloudflare (data-cfemail).
 function decodeEntities(html) {
@@ -90,7 +81,8 @@ function cloudflareEmails(html) {
 export function findEmails(rawHtml, siteHost) {
   const found = new Set(cloudflareEmails(rawHtml));
   const html = decodeEntities(rawHtml);
-  const deob = html.replace(/\s*(\[at\]|\(at\)|\s+arobase\s+)\s*/gi, '@').replace(/\s*(\[dot\]|\(dot\))\s*/gi, '.');
+  const deob = html.replace(/\s+/g, ' ').replace(/\[at\]|\(at\)|\barobase\b/gi, '@').replace(/\[dot\]|\(dot\)/gi, '.')
+    .replace(/ @ | @|@ /g, '@').replace(/ \. | \.|\. /g, '.');
   for (const m of deob.matchAll(/mailto:([^"'?\s>]+)/gi)) {
     try { found.add(decodeURIComponent(m[1]).toLowerCase()); } catch { /* lien mal encodé */ }
   }
@@ -224,7 +216,7 @@ export function informationsPubliques(pages = [], place = {}) {
     const source = publicLink(page.finalUrl ?? page.url);
     if (!source || typeof page.html !== 'string') continue;
     const html = page.html.slice(0, MAX_BYTES), host = new URL(source).hostname, country = paysDuSite(place, host);
-    info.pages.push({ url: source, titre: plain(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').slice(0, 120) });
+    info.pages.push({ url: source, titre: plain([...htmlElements(html, 'title', 1)][0]?.content ?? '').slice(0, 120) });
     add('sites', info.pages[0].url, source);
     const email = value => { for (const address of findEmails('mailto:' + String(value ?? '').replace(/^mailto:/i, ''), host)) add('emails', address, source); };
     const phone = value => { try { const parsed = normaliserTelephone(decodeURIComponent(String(value ?? '').replace(/^tel:/i, '')), country); if (parsed) add('telephones', parsed, source); } catch {} };
@@ -235,7 +227,7 @@ export function informationsPubliques(pages = [], place = {}) {
       if (label) addLink('reseaux', url, label, source);
       if (estPageUtile(link) || /services?|prestat|diensten|aanbod|tarif|prix|prijzen|pricing|horaires|opening|heures|menu|menukaart|livraison|delivery|afhalen/i.test(link.url + ' ' + link.text)) addLink('liens', link.url, link.text, source);
     }
-    for (const match of html.matchAll(/<address\b[^>]*>([\s\S]*?)<\/address>/gi)) add('adresse', match[1], source);
+    for (const match of htmlElements(html, 'address', 12)) add('adresse', match.content, source);
     // Structured business data only; employee/person records and arbitrary scripts are ignored.
     let budget = 300;
     const walk = (node, depth = 0) => {
@@ -266,39 +258,39 @@ export function informationsPubliques(pages = [], place = {}) {
       }
       for (const [key, value] of Object.entries(node)) if (key !== 'employee' && key !== 'employees' && key !== 'founder' && value && typeof value === 'object') walk(value, depth + 1);
     };
-    for (const match of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)) {
-      if (attr(match[1], 'type').toLowerCase() !== 'application/ld+json' || match[2].length > 120000) continue;
-      try { walk(JSON.parse(match[2])); } catch { /* broken structured data does not invalidate the page */ }
+    for (const match of htmlElements(html, 'script', 64)) {
+      if (attr(match.attrs, 'type').toLowerCase() !== 'application/ld+json' || match.content.length > 120000) continue;
+      try { walk(JSON.parse(match.content)); } catch { /* broken structured data does not invalidate the page */ }
     }
     // Microdata: retain public business properties, excluding nested Person scopes.
-    const microHtml = html.replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
-    const lowerHtml = microHtml.toLowerCase();
-    const stack = []; let tokens = 0;
-    for (const match of microHtml.matchAll(/<\/?([a-z][\w:-]*)\b([^>]*)>/gi)) {
-      if (++tokens > 10000) break;
-      const tag = match[1].toLowerCase();
-      if (match[0][1] === '/') { const index = stack.findLastIndex(item => item.tag === tag); if (index >= 0) stack.length = index; continue; }
-      const type = attr(match[2], 'itemtype').split(/[\/#]/).at(-1), inherited = stack.at(-1)?.context ?? null;
+    const stack = [];
+    for (const match of htmlTags(html, { skipHidden: true, limit: 10000 })) {
+      if (match.hidden) continue;
+      const tag = match.tag;
+      if (match.closing) { const index = stack.findLastIndex(item => item.tag === tag); if (index >= 0) stack.length = index; continue; }
+      const type = attr(match.attrs, 'itemtype').split(/[\/#]/).at(-1), inherited = stack.at(-1)?.context ?? null;
       const context = type === 'Person' ? 'person' : business(type) ? 'business' : inherited;
-      const properties = attr(match[2], 'itemprop').split(/\s+/);
+      const properties = attr(match.attrs, 'itemprop').split(/\s+/);
       if (context !== 'person') {
-        const end = lowerHtml.indexOf('</' + tag, match.index + match[0].length);
-        const text = end >= 0 ? microHtml.slice(match.index + match[0].length, Math.min(end, match.index + match[0].length + 2000)) : '';
-        const value = attr(match[2], 'content') || attr(match[2], 'href') || attr(match[2], 'datetime') || text;
+        const window = html.slice(match.end, match.end + 2000), end = window.toLowerCase().indexOf('</' + tag);
+        const text = end >= 0 ? window.slice(0, end) : '';
+        const value = attr(match.attrs, 'content') || attr(match.attrs, 'href') || attr(match.attrs, 'datetime') || text;
         if (properties.includes('email')) email(plain(value));
         if (properties.includes('telephone')) phone(plain(value));
         if (properties.includes('address') || type === 'PostalAddress') add('adresse', text || value, source);
         if (properties.includes('openingHours')) add('horaires', value, source);
         if (properties.includes('availableService')) add('services', value, source);
       }
-      if (!/^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag) && !/\/\s*>$/.test(match[0])) stack.push({ tag, context });
+      if (!/^(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/.test(tag) && !/\/\s*>$/.test(match.raw)) stack.push({ tag, context });
     }
   }
   return info;
 }
 
 /** Lit un site. `onStep(texte)` raconte ce que le lecteur fait, page par page. */
-export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
+export async function lireDirecte(place, { onStep, resolver, fetchImpl, requestTimeoutMs = 10000, siteTimeoutMs = 50000 } = {}) {
+  const signal = AbortSignal.timeout(Math.min(50000, Math.max(20, Math.floor(siteTimeoutMs))));
+  const requestOptions = { resolver, fetchImpl, signal, requestTimeoutMs };
   if (!place.website) return { ok: false, raison: 'pas de site', signals: { site: false }, emails: [], excerpt: '' };
   let start;
   try { start = new URL(place.website); } catch {
@@ -310,8 +302,10 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
   }
   onStep?.(`J'ouvre ${start.host}`);
   let home;
-  try { home = await getHtml(start.href, { resolver, fetchImpl }); } catch (e) {
-    return { ok: false, raison: `site injoignable (${e.message})`, signals: { site: false, injoignable: true }, emails: [], excerpt: '' };
+  try { home = await getHtml(start.href, requestOptions); } catch (e) {
+    const timeout = signal.aborted || ['TimeoutError', 'AbortError'].includes(e?.name);
+    return { ok: false, raison: timeout ? 'Le site ne répond pas dans le délai de lecture. La mission continue.' : `site injoignable (${e.message})`,
+      signals: { site: false, injoignable: true, ...(timeout ? { read_error: { code: signal.aborted ? 'site_timeout' : 'site_request_timeout', retryable: true } } : {}) }, emails: [], excerpt: '' };
   }
   const pages = [{ url: home.finalUrl, html: home.html }];
   const origin = new URL(home.finalUrl).origin;
@@ -331,12 +325,14 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
       : ['/contact', '/mentions-legales', '/impressum'];
   if (!candidates.length) for (const path of fallbackPaths) candidates.push({ url: new URL(path, home.finalUrl).href, text: '' });
   const seen = new Set([home.finalUrl]);
+  let attempts = 1;
   for (const l of candidates) {
-    if (pages.length >= 4) break;
+    if (attempts >= 4 || signal.aborted) break;
     if (seen.has(l.url)) continue;
     seen.add(l.url);
+    attempts++;
     onStep?.(`Je lis ${new URL(l.url).pathname}`);
-    try { const page = await getHtml(l.url, { resolver, fetchImpl }); pages.push({ url: page.finalUrl, html: page.html }); } catch {}
+    try { const page = await getHtml(l.url, requestOptions); pages.push({ url: page.finalUrl, html: page.html }); } catch {}
   }
 
   const all = pages.map((p) => p.html).join('\n');
@@ -353,8 +349,9 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
     menu_pdf: /href=["'][^"']+\.pdf["']/i.test(all) && /carte|menu/i.test(all),
     outil: detect(all, BUILDERS),
     annee: years.length ? Math.max(...years) : null,
-    titre: (home.html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').replace(/\s+/g, ' ').trim().slice(0, 120),
+    titre: visibleText([...htmlElements(home.html, 'title', 1)][0]?.content ?? '').replace(/\s+/g, ' ').trim().slice(0, 120),
     pages_lues: pages.map((p) => new URL(p.url).pathname),
+    pages_essayees: attempts,
     ...langueDuSite(home.html),
   };
   const info = informationsPubliques(pages, place);
@@ -374,6 +371,44 @@ export async function lire(place, { onStep, resolver, fetchImpl } = {}) {
   onStep?.(emails.length ? `Adresse trouvée : ${emails[0]}` : 'Aucune adresse de contact affichée');
   if (telephones.length) onStep?.(`Téléphone trouvé : ${telephones[0]}`);
   return { ok: true, signals, emails, email_source, telephones, excerpt: text.slice(0, 1500) };
+}
+
+export function echecLecture(code = 'site_timeout') {
+  const timeout = code === 'site_timeout';
+  const message = timeout ? 'Lecture de ce site arrêtée après le délai maximal de 50 secondes. La mission continue avec les autres commerces.'
+    : 'La lecture isolée de ce site a échoué. La mission continue avec les autres commerces.';
+  return { ok: false, raison: message, signals: { site: false, injoignable: true, read_error: { code, message, retryable: true } }, emails: [], excerpt: '' };
+}
+
+/** Production : le HTML public ne s'exécute jamais sur la boucle principale de l'API. */
+export function lireProtegee(place, { onStep, siteTimeoutMs = 50000, workerUrl = new URL('./lecteur-worker.mjs', import.meta.url) } = {}) {
+  return new Promise((resolve) => {
+    let worker, settled = false;
+    const finish = (result) => {
+      if (settled) return; settled = true; clearTimeout(timer);
+      if (!worker) { resolve(result); return; }
+      worker.removeAllListeners('message');
+      // Ce worker ne fait que lire des pages : aucune base ni aucun moteur n'est accessible à son entrée.
+      worker.terminate().then(() => resolve(result), () => resolve(result));
+    };
+    const timer = setTimeout(() => finish(echecLecture('site_timeout')), Math.min(50000, Math.max(20, Math.floor(siteTimeoutMs))));
+    try {
+      worker = new Worker(workerUrl, { execArgv: [], resourceLimits: { maxOldGenerationSizeMb: 128, maxYoungGenerationSizeMb: 16, stackSizeMb: 4 },
+        workerData: { place: { website: place.website, pays: place.pays, country_code: place.country_code, email_osm: place.email_osm } } });
+      worker.on('message', (message) => {
+        if (settled) return;
+        if (message?.type === 'step' && typeof message.texte === 'string') { try { onStep?.(message.texte.slice(0, 500)); } catch { finish(echecLecture('site_read_failed')); } }
+        else if (message?.type === 'result' && message.result && typeof message.result.ok === 'boolean') finish(message.result);
+      });
+      worker.on('error', () => finish(echecLecture('site_read_failed')));
+      worker.once('exit', () => finish(echecLecture('site_read_failed')));
+    } catch { finish(echecLecture('site_read_failed')); }
+  });
+}
+
+export function lire(place, options = {}) {
+  // Les réponses réseau injectées sont réservées aux tests déterministes, sans réseau ni modèle.
+  return options.resolver || options.fetchImpl ? lireDirecte(place, options) : lireProtegee(place, options);
 }
 
 /** Le score : est-ce un bon client pour l'offre ? Chaque point est expliqué (pas de boîte noire). */

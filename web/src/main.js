@@ -35,9 +35,11 @@ const updateUI=createUpdateUI({root:$('updates'), getLang});
 const updateButton=document.createElement('button');updateButton.type='button';updateButton.textContent=l('updates');updateButton.addEventListener('click',()=>{updateUI.open();});$('updates').prepend(updateButton);
 
 let deferredReplay=null;
-const results=createResultsDialog({onClose:()=>{if(deferredReplay){const id=deferredReplay;deferredReplay=null;replay(id).catch(showError);}}});
+const results=createResultsDialog({onResume:resumeSearch,onClose:()=>{if(deferredReplay){const id=deferredReplay;deferredReplay=null;replay(id).catch(showError);}}});
 let latestResultRun=null;
 const resultButton=document.createElement('button');resultButton.type='button';resultButton.textContent=({fr:'Résultats',nl:'Resultaten',en:'Results'})[getLang()];resultButton.addEventListener('click',()=>results.open(runId??latestResultRun));document.querySelector('.app-controls').append(resultButton);
+const resumeButton=document.createElement('button');resumeButton.type='button';resumeButton.hidden=true;resumeButton.textContent=({fr:'Reprendre la mission',nl:'Missie hervatten',en:'Resume mission'})[getLang()];resumeButton.addEventListener('click',()=>resumeSearch(latestResultRun).catch(showError));document.querySelector('.app-controls').append(resumeButton);
+async function resumeSearch(id){if(!id)return;const r=await fetch(`/api/runs/${encodeURIComponent(id)}/resume`,{method:'POST'});const body=await r.json();if(!r.ok)throw new Error(t(body.error??l('launchFailed')));location.assign('?run='+encodeURIComponent(body.runId));}
 const canvas = $('world');
 const g = canvas.getContext('2d');
 const params = new URLSearchParams(location.search);
@@ -262,6 +264,8 @@ async function launch(p) {
 }
 
 // Tous les gestes reçus en direct, rangés par mission : une mission rapide peut commencer avant que la page sache laquelle suivre.
+let healthExpected=false,healthPending=false,healthLost=false;
+setInterval(async()=>{if(!healthExpected||healthPending||document.hidden)return;healthPending=true;try{const response=await fetch('/api/health',{signal:AbortSignal.timeout(5000),cache:'no-store'});if(!response.ok)throw new Error();if(healthExpected&&healthLost){healthLost=false;$('mission-status').className='';$('mission-status').textContent=l('working');}}catch{if(healthExpected){healthLost=true;$('mission-status').hidden=false;$('mission-status').className='error';$('mission-status').textContent=l('serverUnresponsive');}}finally{healthPending=false;}},12000);
 const heard = new Map();
 const pushed = new Set();
 function deliver(e) {
@@ -281,13 +285,13 @@ function connect() {
       if(e.type==='error' && !e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='error';status.textContent=t(e.data?.message ?? l('failed'));}
       if(e.type==='retry' && e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='';status.textContent=l('retryingDraft');}
       if(e.agent==='chef' && e.type==='drafts:start' && world) world.writeGo=true;
-      if(e.agent==='chef' && e.type==='end') {results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':e.data?.partiel?'partial':'done';status.textContent=l(e.data?.erreur?'failed':e.data?.partiel?'partial':'completed');}
+      if(e.agent==='chef' && e.type==='end') {healthExpected=false;results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':e.data?.partiel?'partial':'done';status.textContent=l(e.data?.erreur?'failed':e.data?.partiel?'partial':'completed');}
     }
   };
 }
 /** Suivre une mission en direct : ses gestes déjà passés d'abord (reçus ou relus sur le serveur), puis la suite. */
 async function follow(id) {
-  liveRun = id;
+  healthExpected=true;healthLost=false;liveRun = id;
   const past = await fetch(`/api/runs/${id}/events`).then((r) => r.json()).catch(() => []);
   const all = [...past, ...(heard.get(id) ?? [])].map((e) => ({ ...e, data: typeof e.data === 'string' ? JSON.parse(e.data) : e.data }));
   all.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
@@ -430,8 +434,8 @@ async function boot() {
   const asked = params.get('run');
   const st = await fetch('/api/state').then((r) => r.json()).catch(() => ({}));
   config = st.config ?? {};
-  latestResultRun=st.run?.id??null;
-  const showingResults=!CINE && st.run && !st.running && ['fini','partiel','erreur'].includes(st.run.status) ? await results.autoOpen(asked ?? st.run.id).catch(()=>false) : false;
+  latestResultRun=st.run?.id??null;resumeButton.hidden=!st.resumable;
+  const showingResults=!CINE && st.run && !st.running && (st.resumable||['fini','partiel','erreur'].includes(st.run.status)) ? await results.autoOpen(asked ?? st.run.id).catch(()=>false) : false;
   lanc = createLancement($('launch'), {
     config,
     onLaunch: launch,

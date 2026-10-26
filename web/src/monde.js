@@ -136,6 +136,8 @@ export class Monde {
     this.journal = [];
     this.line = null;
     this.teamSent = false;
+    this.teamRequested = false;
+    this.teamDispatchPending = false;
     this.writeGo = false;
     this.firstKept = null;
     this.firstMail = null;
@@ -225,6 +227,9 @@ export class Monde {
       return;
     }
     if (e.place_id && e.agent === 'eclaireur' && e.type === 'found') this.addPlace(e.data);
+    // Discovery now waits for the reading/writing pipeline. Reader work must
+    // start before scout.done, while the introductory briefing still plays.
+    if (e.type === 'start' && this.actors.get(e.agent)?.role === 'lecteur' && !this.places.get(e.place_id)?.data?.visite) this.teamRequested = true;
     this.actors.get(e.agent)?.lane.push(e);
   }
 
@@ -290,18 +295,14 @@ export class Monde {
           { t: 'wait', ms: 700, pose: 'stand' },
           { t: 'go', to: a.home, dur: 0.9 },
           { t: 'call', fn: () => { a.flying = false; a.status = tr('Au QG'); } });
-        // Prosper envoie les lecteurs quand l'éclaireur a fini (ou tout de suite s'il en a déjà trouvé et que ça traîne)
-        this.later(1.5, () => {
-          if (this.teamSent) return;
-          this.actors.get('chef').say(tr('Hugo, Zoé, Iris : allez les voir !'), 1700, 'chef', 3);
-          this.later(0.9, () => { this.teamSent = true; this.emit('team', null); });
-        });
+        // Fallback for older replays without a reader.start event.
+        this.later(1.5, () => { this.teamRequested = true; });
       }
       return;
     }
     if (a.role === 'lecteur' && q) {
       if (e.type === 'start') {
-        a.do({ t: 'until', fn: () => q.revealed && this.teamSent });
+        a.do({ t: 'until', fn: () => q.revealed && (this.teamSent || q.data?.visite) });
         if (a.inside) a.do({ t: 'exit' });
         a.do({ t: 'call', fn: () => {
             a.status = tr('Va chez {nom}', { nom: q.name }); a.target = q.id;
@@ -385,6 +386,16 @@ export class Monde {
     if (this.scan) {
       this.scan.r = (this.time - this.scan.t0) * this.scan.speed;
       if (this.scan.end && this.time - this.scan.end > 1.2) this.scan = null;
+    }
+    if (this.teamRequested && this.introDone && !this.teamSent && !this.teamDispatchPending) {
+      this.teamDispatchPending = true;
+      this.actors.get('chef').say(tr('Hugo, Zoé, Iris : allez les voir !'), 1700, 'chef', 3);
+      this.later(0.9, () => {
+        this.teamDispatchPending = false;
+        if (this.teamSent) return;
+        this.teamSent = true;
+        this.emit('team', null);
+      });
     }
     for (const a of this.actors.values()) {
       if (!a.cur && !a.tasks.length && a.lane.length) this.stage(a, a.lane.shift());

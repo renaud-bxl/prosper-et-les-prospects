@@ -1,5 +1,13 @@
 # Historique des versions
 
+## 1.0.4 — 26 octobre 2026
+
+- Les lecteurs partent pendant le repérage adaptatif, sans attendre sa fin.
+- Analyse HTML linéaire et isolée dans un travailleur avec délai maximal : une page bloquée ne fige plus le serveur ni les autres commerces. Les essais de pages et les délais DNS/HTTP sont bornés.
+- Détection du Codex fourni avec les applications officielles sur macOS, même lorsque le terminal ne le trouve pas dans son chemin habituel.
+- Reprise explicite d’une mission interrompue depuis ses commerces enregistrés, avec les mêmes objectifs et sans réécrire les brouillons ou décisions existants.
+- Une perte de réponse du serveur est signalée à l’écran.
+
 ## 1.0.3 — 23 octobre 2026
 
 - Résultats réunis avec carte des commerces et tous les mails préparés. Consultation des commerces écartés, non lus ou sans coordonnées ; édition, validation, refus et copie des brouillons.

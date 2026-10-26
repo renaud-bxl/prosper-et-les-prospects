@@ -51,7 +51,24 @@ export function isPublicAddress(rawAddress) {
 
 export const publicResolver = (hostname) => lookup(hostname, { all: true, verbatim: true });
 
-export async function assertPublicUrl(input, { resolver = publicResolver } = {}) {
+// Le DNS et les implémentations injectées ne respectent pas forcément AbortSignal.
+// Leurs résultats tardifs restent observés, mais ne retiennent pas le lecteur.
+export function attendreAvecSignal(operation, signal, onLateValue = () => {}) {
+  signal?.throwIfAborted();
+  const promise = Promise.resolve().then(operation);
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const abort = () => { if (done) return; done = true; signal.removeEventListener('abort', abort); reject(signal.reason ?? new Error('Lecture annulée')); };
+    signal.addEventListener('abort', abort, { once: true });
+    promise.then((value) => { if (done) { try { onLateValue(value); } catch {} return; } done = true; signal.removeEventListener('abort', abort); resolve(value); },
+      (error) => { if (done) return; done = true; signal.removeEventListener('abort', abort); reject(error); });
+    if (signal.aborted) abort();
+  });
+}
+
+export async function assertPublicUrl(input, { resolver = publicResolver, signal } = {}) {
+  signal?.throwIfAborted();
   let url;
   try { url = new URL(input); } catch { throw new Error('Adresse de site invalide'); }
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Seuls les sites HTTP(S) publics sont autorisés');
@@ -67,7 +84,7 @@ export async function assertPublicUrl(input, { resolver = publicResolver } = {})
   }
   if (!hostname.includes('.')) throw new Error('Les noms de réseau locaux sont interdits');
   let answers;
-  try { answers = await resolver(hostname); } catch { throw new Error('Impossible de vérifier l’adresse publique du site'); }
+  try { answers = await attendreAvecSignal(() => resolver(hostname), signal); } catch { signal?.throwIfAborted(); throw new Error('Impossible de vérifier l’adresse publique du site'); }
   if (!Array.isArray(answers) || !answers.length || !answers.every((answer) => isPublicAddress(typeof answer === 'string' ? answer : answer?.address))) {
     throw new Error('Le domaine doit uniquement résoudre vers des adresses publiques');
   }
@@ -82,17 +99,18 @@ export async function fetchPublic(input, { resolver = publicResolver, fetchImpl 
   let next = input;
   for (let redirects = 0; ; redirects++) {
     requestOptions.signal?.throwIfAborted();
-    const url = await assertPublicUrl(next, { resolver });
+    const url = await assertPublicUrl(next, { resolver, signal: requestOptions.signal });
     requestOptions.signal?.throwIfAborted();
-    const response = await fetchImpl(url.href, { ...requestOptions, redirect: 'manual' });
+    const response = await attendreAvecSignal(() => fetchImpl(url.href, { ...requestOptions, redirect: 'manual' }), requestOptions.signal,
+      (late) => { late.body?.cancel().catch(() => {}); });
     // A non-conforming/custom fetch must never silently bypass the manual redirect policy.
     if (response.redirected) {
-      await response.body?.cancel().catch(() => {});
+      response.body?.cancel().catch(() => {});
       throw new Error('Redirection automatique non autorisée');
     }
     if (!REDIRECTS.has(response.status)) return { response, finalUrl: url.href };
     const location = response.headers.get('location');
-    await response.body?.cancel().catch(() => {});
+    response.body?.cancel().catch(() => {});
     if (!location) throw new Error('Redirection sans destination');
     if (redirects >= MAX_REDIRECTS) throw new Error('Trop de redirections (maximum 5)');
     try { next = new URL(location, url).href; } catch { throw new Error('Destination de redirection invalide'); }

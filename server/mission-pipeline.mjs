@@ -23,7 +23,7 @@ export function objectifsMission(config) {
 }
 
 export async function runMissionPipeline(config, { discover, read, score, write, found = () => {}, update = () => {}, saved = () => null,
-  emit = () => {}, allowed = () => true, match = null } = {}) {
+  emit = () => {}, allowed = () => true, match = null, initialPlaces = [] } = {}) {
   const targets = objectifsMission(config);
   const minimum = Number(config.equipe?.score_minimum ?? 60);
   const readersCount = Math.min(3, Math.max(1, Number(config.equipe?.lecteurs_en_parallele) || 3));
@@ -51,6 +51,52 @@ export async function runMissionPipeline(config, { discover, read, score, write,
   const progress = () => { refresh(); emit('chef', 'progress', null, { ...counts, ...targets, examines: counts.lus,
     objectif_atteint: reached(), a_reprendre: targets.objectif_mails ? Math.max(0, targets.objectif_mails - counts.ecrits) : 0,
     writing_blocked: writingBlocked }); };
+
+  // Seed persisted state before starting workers. A default database score of0
+  // is not evidence that a trouve/lecture row was actually analysed.
+  const analysedStatuses = new Set(['analyse', 'retenu', 'a_ecrire', 'ecriture', 'erreur', 'en_attente', 'valide', 'refuse', 'ecarte', 'rejete']);
+  const rejectedStatuses = new Set(['refuse', 'ecarte', 'rejete']);
+  const addressesOf = row => [...new Set([row.to_email, ...(Array.isArray(row.emails) ? row.emails : [])]
+    .filter(value => typeof value === 'string').map(value => value.trim().toLowerCase())
+    .filter(value => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(value)))];
+  for (const row of Array.isArray(initialPlaces) ? initialPlaces : []) {
+    if (row?.id == null || seen.has(String(row.id))) continue;
+    const id = String(row.id); seen.add(id); entries.set(id, { ...row, id });
+  }
+  counts.trouves = entries.size;
+  // Existing drafts reserve their actual recipient before unfinished analyses
+  // choose an alternative public address. Decisions themselves stay untouched.
+  const priority = row => row.status === 'valide' ? 0 : row.mail?.trim() ? 1 : row.status === 'refuse' ? 2 : 3;
+  for (const row of [...entries.values()].sort((a, b) => priority(a) - priority(b))) {
+    const hasMail = Boolean(row.mail?.trim()), decided = ['valide', 'refuse'].includes(row.status);
+    const analysisEvidence = Array.isArray(row.signals?.raisons) || Object.hasOwn(row.signals ?? {}, 'raison');
+    const analysed = analysedStatuses.has(row.status) || hasMail || analysisEvidence;
+    if (analysed) counts.lus++;
+    if (rejectedStatuses.has(row.status)) counts.ecartes++;
+    if (row.status === 'erreur' && !hasMail) counts.erreurs_redaction++;
+    const addresses = addressesOf(row);
+    const address = hasMail || decided ? addresses[0] : addresses.find(email => !claimedEmails.has(email));
+    const duplicate = address && claimedEmails.has(address);
+    if ((hasMail || decided) && address) claimedEmails.add(address);
+    const retained = analysed && !rejectedStatuses.has(row.status) && Boolean(address) && !duplicate
+      && (hasMail || row.status === 'valide' || Number(row.score) >= minimum);
+    if (retained) {
+      qualified.add(row.id); claimedEmails.add(address);
+      if (!hasMail && !decided) {
+        const emails = [address, ...addresses.filter(email => email !== address)];
+        if (row.to_email !== address || row.emails?.[0] !== address) record(row.id, { to_email: address, emails });
+        if (targets.objectif_mails) {
+          const lecture = { ok: row.signals?.site !== false, signals: { ...(row.signals ?? {}) }, emails,
+            telephones: row.signals?.telephones ?? [], email_source: row.email_source ?? null,
+            excerpt: row.excerpt ?? '', raison: row.signals?.raison ?? null };
+          pendingWrites++; writes.push({ place: row, lecture, note: { score: Number(row.score) || 0, raisons: row.signals?.raisons ?? [] } });
+        }
+      }
+    } else if (!analysed && !hasMail && !decided) {
+      pendingReads++; reads.push(row);
+    }
+  }
+  if (entries.size) progress();
   const writer = async (number) => {
     for (let job; (job = await writes.next()); ) {
       const agent = `redacteur-${number}`, { place, lecture, note } = job;
@@ -130,13 +176,18 @@ export async function runMissionPipeline(config, { discover, read, score, write,
   const matchTasks = match ? [matcher(), matcher()] : [];
   let discovery = null;
   try {
-    discovery = await discover({ ...config.recherche, ...targets }, {
-      shouldContinue: () => !stopDiscovery(),
+    const remainingScan = Math.max(0, targets.limite_scan - counts.trouves);
+    // A source can rediscover seeded ids within its own250-result budget. The
+    // admission guard below applies the remaining budget to genuinely new ids.
+    discovery = remainingScan && !stopDiscovery() ? await discover({ ...config.recherche, ...targets }, {
+      shouldContinue: () => !stopDiscovery() && counts.trouves < targets.limite_scan,
       onLog: (texte) => emit('eclaireur', 'step', null, { texte }),
       onFound: async (place) => {
+        if (place?.id == null) return true;
+        place = { ...place, id: String(place.id) };
         while (!stopDiscovery() && (pendingReads >= readersCount * 2 || !writingBlocked && targets.objectif_mails && counts.ecrits + pendingWrites >= targets.objectif_mails && counts.ecrits < targets.objectif_mails)) await waitChange();
         if (stopDiscovery()) return false;
-        if (seen.has(place.id) || !allowed(place)) return true;
+        if (seen.has(String(place.id)) || !allowed(place)) return true;
         if (counts.trouves >= targets.limite_scan) return false;
         seen.add(place.id); entries.set(place.id, { ...place, status: 'trouve' }); counts.trouves++;
         found(place); emit('eclaireur', 'found', place.id, place);
@@ -144,7 +195,7 @@ export async function runMissionPipeline(config, { discover, read, score, write,
         pendingReads++; reads.push(place);
         return true;
       },
-    });
+    }) : { reason: stopDiscovery() ? 'objective_reached' : 'scan_limit', exhausted: false, queries: 0, rayon: config.recherche.rayon_m };
     if (discovery?.reason === 'source_error') { fatal = true; emit('eclaireur', 'error', null, { code: 'source_error', message: 'La source de commerces ne répond pas. Les résultats déjà obtenus sont conservés.' }); }
   } catch { fatal = true; emit('eclaireur', 'error', null, { code: 'source_error', message: 'La source de commerces ne répond pas. Les résultats déjà obtenus sont conservés.' }); }
   reads.close(); matches.close();
@@ -154,10 +205,11 @@ export async function runMissionPipeline(config, { discover, read, score, write,
   if (workerFailures.length || all.some((result) => result.status === 'rejected')) { fatal = true; emit('chef', 'error', null, { code: 'workflow_failed', message: 'Une étape de traitement a été interrompue. Les résultats déjà enregistrés sont conservés.' }); }
   refresh();
   const objectiveReached = reached();
-  const reason = workerFailures.length ? 'workflow_failed' : fatal ? 'source_error' : objectiveReached ? 'objective_reached' : writingBlocked ?? discovery?.reason ?? 'radius_exhausted';
+  const reason = workerFailures.length ? 'workflow_failed' : fatal ? 'source_error' : objectiveReached ? 'objective_reached' : writingBlocked
+    ?? (counts.trouves >= targets.limite_scan ? 'scan_limit' : discovery?.reason) ?? 'radius_exhausted';
   const partial = !objectiveReached || fatal || reason === 'source_error';
   const result = { ...counts, ...targets, examines: counts.lus, objectif_atteint: objectiveReached,
-    a_reprendre: Math.max(0, targets.objectif_mails - counts.ecrits), reason, exhausted: discovery?.exhausted === true, writing_blocked: writingBlocked,
+    a_reprendre: Math.max(0, targets.objectif_mails - counts.ecrits), reason, exhausted: reason !== 'scan_limit' && discovery?.exhausted === true, writing_blocked: writingBlocked,
     rayon: discovery?.rayon ?? config.recherche.rayon_m, queries: discovery?.queries ?? null,
     status: fatal && counts.lus === 0 ? 'erreur' : partial ? 'partiel' : 'fini', erreur: fatal && counts.lus === 0, partiel: partial };
   emit('eclaireur', 'done', null, { ...result, demandes: targets.objectif_contacts });

@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
-import { join, delimiter } from 'node:path';
-import { existsSync, accessSync, constants, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join, delimiter, isAbsolute, resolve } from 'node:path';
+import { statSync, accessSync, constants, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { RedactionError, avecRepriseRedaction } from '../redaction-recovery.mjs';
 
 export const SCHEMA_BROUILLON = {
@@ -27,29 +27,96 @@ export function normaliserRedaction(config = {}) {
   return { moteur, langue, modele, timeoutMs };
 }
 
-function binaire(moteur) {
-  const variable = moteur === 'claude' ? 'CLAUDE_BIN' : 'CODEX_BIN';
-  if (process.env[variable]) return process.env[variable];
-  const local = join(homedir(), '.local', 'bin', moteur);
-  return existsSync(local) ? local : moteur;
+function fichierExecutable(path) {
+  try { return statSync(path).isFile() && (accessSync(path, constants.X_OK), true); }
+  catch { return false; }
 }
 
-export function capacitesMoteurs() {
-  const executable = (binary) => {
-    const paths = binary.includes('/') || binary.includes('\\') ? [binary]
-      : (process.env.PATH ?? '').split(delimiter).map((path) => join(path, binary));
-    return paths.some((path) => { try { accessSync(path, constants.X_OK); return true; } catch { return false; } });
-  };
-  // Présence du programme seulement : ni authentification ni requête modèle.
-  return { claude: { installe: executable(binaire('claude')) }, codex: { installe: executable(binaire('codex')) } };
+const probesCodex = new Map();
+const flagsCodex = ['--ephemeral', '--ignore-user-config', '--skip-git-repo-check', '--sandbox', '--json', '--output-schema'];
+
+function verifierBundleCodex(binary, env, timeoutMs) {
+  let stat;
+  try { stat = statSync(binary); } catch { return { compatible: false, raison: 'verification_indisponible' }; }
+  const key = `${binary}\0${stat.mtimeMs}\0${stat.size}\0${env.CODEX_HOME ?? ''}\0${timeoutMs}`;
+  const cached = probesCodex.get(key);
+  if (cached && Date.now() - cached.at < 15000) return cached.result;
+  const run = (args) => spawnSync(binary, args, {
+    env: envSansCleApi(env), encoding: 'utf8', input: '', shell: false,
+    timeout: timeoutMs, killSignal: 'SIGKILL', maxBuffer: 128000, windowsHide: true,
+  });
+  const help = run(['exec', '--help']);
+  const helpText = `${help.stdout ?? ''}\n${help.stderr ?? ''}`;
+  let result;
+  if (help.error || help.status !== 0 || !flagsCodex.every((flag) => helpText.includes(flag))) {
+    result = { compatible: false, raison: help.error?.code === 'ETIMEDOUT' ? 'probe_timeout' : 'options_incompatibles' };
+  } else {
+    // Lecture locale uniquement. Le texte brut peut citer la configuration : il ne sort jamais de cette fonction.
+    // Un ancien bundle peut accepter les options mais échouer à lire un modèle utilisateur récent.
+    const login = run(['login', 'status']);
+    const statusText = `${login.stdout ?? ''}\n${login.stderr ?? ''}`;
+    if (login.status === 0) result = { compatible: true, authentification: 'connecte' };
+    else if (!login.error && /\b(?:not logged in|not authenticated|logged out)\b/i.test(statusText)) {
+      result = { compatible: true, authentification: 'absente' };
+    } else result = { compatible: false, raison: login.error?.code === 'ETIMEDOUT' ? 'probe_timeout'
+      : /(?:unknown variant|error loading config|failed to load config|invalid config)/i.test(statusText) ? 'configuration_incompatible' : 'verification_indisponible' };
+  }
+  probesCodex.set(key, { at: Date.now(), result });
+  return result;
+}
+
+// Les chemins injectables servent aux tests isolés ; aucune route HTTP ne fournit ces options.
+export function detecterMoteur(moteur, { env = process.env, home = homedir(), platform = process.platform,
+  bundles = ['/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
+    '/Applications/Codex.app/Contents/Resources/codex'], probeTimeoutMs = 1500 } = {}) {
+  if (!['claude', 'codex'].includes(moteur)) throw new Error('Moteur CLI inconnu.');
+  const directories = (env.PATH ?? '').split(delimiter).filter((path) => isAbsolute(path));
+  const paths = directories.map((path) => join(path, moteur));
+  const variable = moteur === 'claude' ? 'CLAUDE_BIN' : 'CODEX_BIN';
+  if (env[variable]) {
+    // Une surcharge explicite reste prioritaire, même erronée : elle ne doit pas être masquée par un autre CLI.
+    const value = env[variable];
+    const binary = value.includes('/') || value.includes('\\') ? resolve(value)
+      : directories.map((path) => join(path, value)).find(fichierExecutable) ?? value;
+    return { binary, installe: fichierExecutable(binary), source: 'explicite' };
+  }
+  for (const [binary, source] of [...paths.map((path) => [path, 'path']), [join(home, '.local', 'bin', moteur), 'local']]) {
+    if (fichierExecutable(binary)) return { binary, installe: true, source };
+  }
+  const refuses = [];
+  if (moteur === 'codex' && platform === 'darwin') {
+    const timeoutMs = Math.max(100, Math.min(1500, Number(probeTimeoutMs) || 1500));
+    for (const binary of bundles) {
+      if (!isAbsolute(binary) || !fichierExecutable(binary)) continue;
+      const verification = verifierBundleCodex(binary, env, timeoutMs);
+      if (verification.compatible) return { binary, installe: true, source: 'application', authentification: verification.authentification };
+      refuses.push({ binary, raison: verification.raison });
+    }
+  }
+  return { binary: moteur, installe: false, source: 'absent', ...(refuses.length ? { refuses } : {}) };
+}
+
+export function capacitesMoteurs(options = {}) {
+  // Aucun appel modèle ; les bundles officiels sont contrôlés par leurs seules commandes d'aide et d'état local.
+  return { claude: { installe: detecterMoteur('claude', options).installe }, codex: { installe: detecterMoteur('codex', options).installe } };
+}
+
+function binaire(moteur, options) {
+  const detection = detecterMoteur(moteur, options);
+  if (detection.refuses?.length) {
+    const cause = detection.refuses.some((item) => item.raison === 'configuration_incompatible')
+      ? 'sa version ne peut pas lire la configuration locale' : 'ses options ou son état de connexion n’ont pas pu être vérifiés';
+    throw new RedactionError('engine_start_failed', `Codex CLI est présent dans une application officielle, mais ${cause}. Mettez le CLI à jour ou reconnectez-le. Aucun brouillon créé.`);
+  }
+  return detection.binary;
 }
 
 // Commandes vérifiées avec les aides officielles locales. Aucun shell n'interprète les arguments.
-export function commandeRedaction(system, config, schemaPath) {
+export function commandeRedaction(system, config, schemaPath, detectionOptions) {
   const { moteur, modele } = normaliserRedaction(config);
   if (moteur === 'aucun') throw new Error('La rédaction est désactivée : choisir Claude Code ou Codex pour préparer un mail.');
   if (moteur === 'claude') return {
-    binary: binaire(moteur),
+    binary: binaire(moteur, detectionOptions),
     args: ['-p', '--safe-mode', '--output-format', 'json', '--tools', '', '--strict-mcp-config',
       '--disable-slash-commands', '--no-chrome', '--no-session-persistence',
       '--system-prompt', system, '--json-schema', JSON.stringify(SCHEMA_BROUILLON),
@@ -58,7 +125,7 @@ export function commandeRedaction(system, config, schemaPath) {
   const sansOutils = ['shell_tool', 'apps', 'multi_agent', 'hooks', 'remote_plugin', 'plugins', 'code_mode',
     'browser_use', 'computer_use', 'image_generation', 'view_image', 'goals', 'memories', 'shell_snapshot'];
   return {
-    binary: binaire(moteur),
+    binary: binaire(moteur, detectionOptions),
     args: ['exec', '--ephemeral', '--ignore-user-config', '--skip-git-repo-check', '--sandbox', 'read-only',
       '--json', '--color', 'never', '--output-schema', schemaPath,
       '--config', 'approval_policy="never"', '--config', 'forced_login_method="chatgpt"',
@@ -95,8 +162,8 @@ export function lireSortieMoteur(moteur, output) {
   return validerBrouillon(JSON.parse(last.item.text));
 }
 
-function envSansCleApi() {
-  const env = { ...process.env };
+function envSansCleApi(source = process.env) {
+  const env = { ...source };
   for (const name of ['OPENAI_API_KEY', 'CODEX_API_KEY', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
     'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete env[name];
   return env;
@@ -108,9 +175,9 @@ async function executerUneRedaction(system, prompt, config = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'oscar-redacteur-'));
   const schemaPath = join(cwd, 'brouillon.schema.json');
   writeFileSync(schemaPath, JSON.stringify(SCHEMA_BROUILLON), { mode: 0o600 });
-  const { binary, args } = commandeRedaction(system, config, schemaPath);
   const debut = Date.now();
   try {
+    const { binary, args } = commandeRedaction(system, config, schemaPath);
     const output = await new Promise((resolve, reject) => {
       const child = spawn(binary, args, { cwd, env: envSansCleApi(), stdio: ['pipe', 'pipe', 'pipe'], shell: false });
       let out = '', size = 0, settled = false, killer, stoppingError = null;
