@@ -41,6 +41,7 @@ export function createMissionFeed({ loadHistory, onEvent, onSynced = () => {}, o
       onSynced(all);
     })();
     pending = work.catch(error => {
+      if (version !== epoch) return;
       if (version === epoch && selected) {
         retryTimer = setTimeout(() => { retryTimer = null; sync().catch(onSyncError); }, retryDelay(++failures));
       }

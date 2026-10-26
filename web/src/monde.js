@@ -147,21 +147,42 @@ export class Monde {
   placeQG() {
     const c = this.city;
     const W = QG.w * 0.5, D = QG.d * 0.5; // en mètres
+    // Les centres sont arrondis au mètre : leurs emprises se recouvrent et
+    // interrogent donc souvent les mêmes points exacts. Le cache reste local à
+    // cette recherche et conserve séparément les tests du bâtiment et du sol
+    // (l'eau et les grands axes ne sont pas exclus sur le parvis).
+    const cells = new Map(), doors = new Map();
+    const mainRoad = (r) => r.rank >= 3 && !r.pave;
+    const blocked = (x, y, checkGround) => {
+      let row = cells.get(y);
+      if (!row) { row = new Map(); cells.set(y, row); }
+      let state = row.get(x) ?? 0;
+      if (!(state & 1)) {
+        state |= 1 | (c.buildingAt(x, y) ? 2 : 0);
+        row.set(x, state);
+      }
+      if (state & 2) return true;
+      if (!checkGround) return false;
+      if (!(state & 4)) {
+        const area = c.areaAt(x, y);
+        const road = area >= 11 ? null : c.nearestRoad(x, y, 20, mainRoad);
+        state |= 4 | (area >= 11 || (road && road.d < road.half + 0.6) ? 8 : 0);
+        row.set(x, state);
+      }
+      return Boolean(state & 8);
+    };
     const free = (cx, cy) => {
       // de la place devant le QG (on voit l'équipe en entier, sans toit d'immeuble par-dessus)
       for (let y = cy - D / 2 - 3; y <= cy + D / 2 + 26; y += 2) {
         for (let x = cx - W / 2 - 4; x <= cx + W / 2 + 4; x += 2) {
-          if (c.buildingAt(x, y)) return false;
-          if (y > cy + D / 2 + 1) continue;
-          const a = c.areaAt(x, y);
-          if (a >= 11) return false; // l'eau
-          const n = c.nearestRoad(x, y, 20, (r) => r.rank >= 3 && !r.pave);
-          if (n && n.d < n.half + 0.6) return false;
+          if (blocked(x, y, y <= cy + D / 2 + 1)) return false;
         }
       }
       // une rue (ou une place piétonne) devant la porte
-      const n = c.nearestRoad(cx, cy + D / 2 + 3, 26);
-      return Boolean(n);
+      let row = doors.get(cy);
+      if (!row) { row = new Map(); doors.set(cy, row); }
+      if (!row.has(cx)) row.set(cx, Boolean(c.nearestRoad(cx, cy + D / 2 + 3, 26)));
+      return row.get(cx);
     };
     for (let r = 0; r <= 700; r += 7) {
       const steps = Math.max(1, Math.round((2 * Math.PI * r) / 7));

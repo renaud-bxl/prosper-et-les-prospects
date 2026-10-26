@@ -63,3 +63,11 @@ test('leaving a mission cancels a scheduled journal retry', async () => {
   await assert.rejects(feed.select('cafe-1000')); feed.clear();
   await new Promise(resolve => setTimeout(resolve, 30)); assert.equal(calls, 1);
 });
+
+test('an old journal failure cannot report an error over the newly selected mission', async () => {
+  const old = deferred(), received = [];
+  const feed = createMissionFeed({ loadHistory: id => id === 'old' ? old.promise : [e(20, 'start', 'new')], onEvent: event => received.push(event.run_id) });
+  const previous = feed.select('old'); await feed.select('new');
+  old.reject(Error('stale failure')); await assert.doesNotReject(previous);
+  assert.deepEqual(received, ['new']); feed.clear();
+});

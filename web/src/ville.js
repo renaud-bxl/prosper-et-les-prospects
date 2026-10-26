@@ -246,8 +246,10 @@ export class City {
     for (const b of d.buildings.values()) {
       if (!b.parts.length) continue;
       let bb = { minx: Infinity, miny: Infinity, maxx: -Infinity, maxy: -Infinity };
+      const partBounds = [];
       for (const rings of b.parts) {
         const q = bboxOf(rings);
+        partBounds.push(q);
         bb = { minx: Math.min(bb.minx, q.minx), miny: Math.min(bb.miny, q.miny), maxx: Math.max(bb.maxx, q.maxx), maxy: Math.max(bb.maxy, q.maxy) };
       }
       const cx = (bb.minx + bb.maxx) / 2, cy = (bb.miny + bb.maxy) / 2;
@@ -261,7 +263,7 @@ export class City {
       if (kind === 'eglise') roof = 5;
       if (kind === 'bas' || kind === 'plat') roof = r < 0.5 ? 4 : 1;
       const id = this.blist.length + 1;
-      this.blist.push({ id, parts: b.parts, h, ...bb, kind, tone: Math.floor(r2 * 9), roof, seed: Math.floor(r * 997) });
+      this.blist.push({ id, parts: b.parts, partBounds, h, ...bb, kind, tone: Math.floor(r2 * 9), roof, seed: Math.floor(r * 997) });
     }
     // Les arbres : le long des grands axes et dans les parcs (placés une fois pour toute la ville).
     this.grid = new Map();
@@ -301,7 +303,14 @@ export class City {
     for (const i of this.query('b', x, y, x, y)) {
       const b = this.blist[i];
       if (x < b.minx || x > b.maxx || y < b.miny || y > b.maxy) continue;
-      for (const rings of b.parts) if (inRings(x, y, rings)) return b;
+      // A generalized tile building can have many distant polygon parts. Its
+      // overall bounds include all of them; reject each impossible part before
+      // the exact even-odd test, keeping the same part and building order.
+      for (let part = 0; part < b.parts.length; part++) {
+        const bb = b.partBounds[part];
+        if (x < bb.minx || x > bb.maxx || y < bb.miny || y > bb.maxy) continue;
+        if (inRings(x, y, b.parts[part])) return b;
+      }
     }
     return null;
   }
@@ -319,8 +328,15 @@ export class City {
     for (const i of this.query('r', x - maxD, y - maxD, x + maxD, y + maxD)) {
       const r = this.roads[i];
       if (!filter(r)) continue;
+      // The cell index can include a long road whose nearby cell is only in
+      // its bounding rectangle. Skip geometry that cannot improve the exact
+      // nearest distance; keep the original road/segment order for ties.
+      const limit = best?.d ?? maxD;
+      if (r.bb && (x < r.bb.minx - limit || x > r.bb.maxx + limit || y < r.bb.miny - limit || y > r.bb.maxy + limit)) continue;
       for (let k = 0; k + 1 < r.pts.length; k++) {
         const [ax, ay] = r.pts[k], [bx, by] = r.pts[k + 1];
+        const limit = best?.d ?? maxD;
+        if (x < Math.min(ax, bx) - limit || x > Math.max(ax, bx) + limit || y < Math.min(ay, by) - limit || y > Math.max(ay, by) + limit) continue;
         const dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy || 1e-9;
         const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2));
         const qx = ax + t * dx, qy = ay + t * dy;

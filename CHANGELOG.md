@@ -2,6 +2,8 @@
 
 ## 1.0.5 — 26 octobre 2026
 
+- Placement du QG accéléré par des tests géométriques bornés aux parties pertinentes des bâtiments et un cache local de points. Les critères, le résultat et les rues restent identiques ; le calcul passe de 71,4 à 3,47 secondes sur les tuiles de Bruxelles testées.
+
 - Le journal de la mission est synchronisé avant les événements en direct : un lecteur rapide ne peut plus être effacé par l’initialisation tardive de la scène.
 - Après une coupure du suivi, les événements manqués sont récupérés dans l’ordre, sans doublons ni remise à zéro de la mission.
 - Un échec temporaire du journal est réessayé automatiquement ; le chargement de la ville n’abandonne plus une recherche déjà lancée. Le statut de fin d’un lot de rédaction est reconnu après reconnexion.
