@@ -4,6 +4,7 @@ import { ROLES, portrait, ANCHOR_Y } from './robots.js';
 import { badgeSprite } from './sprites.js';
 import { TEAM, masque } from './monde.js';
 import { t as tr, getLocale } from './i18n.js';
+import { hudCounters } from './hud-state.js';
 
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const host = (url) => { try { return new URL(url).host.replace(/^www\./, ''); } catch { return ''; } };
@@ -114,12 +115,13 @@ export function createHud(root, world) {
   /** À chaque image : les compteurs, l'équipe, les bulles (placées au-dessus des robots), la carte du score. */
   function update(cam, W, H, S, dpr) {
     const ps = [...world.places.values()];
-    const now = {
+    const animated = {
       trouves: ps.filter((q) => q.state !== 'cache').length,
       lus: ps.filter((q) => q.read).length,
       retenus: ps.filter((q) => ['retenu', 'ecriture', 'pret', 'valide'].includes(q.state)).length,
       prets: ps.filter((q) => q.state === 'pret' || q.state === 'valide').length,
     };
+    const now = hudCounters(animated, world.progress);
     for (const k of Object.keys(now)) {
       if (now[k] === counters[k]) continue;
       const el = root.querySelector(`.r[data-k="${k}"]`);
@@ -127,7 +129,9 @@ export function createHud(root, world) {
       if (counters[k] >= 0) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
       counters[k] = now[k];
     }
-    $('h-nin').textContent = now.prets;
+    // Letters keep arriving with the characters; the top counters show the
+    // actual mission totals even when the choreography is still catching up.
+    $('h-nin').textContent = animated.prets;
     const progress=world.progress;const ratio=progress?.objectif_contacts?Math.min((progress.retenus??0)/progress.objectif_contacts,progress.objectif_mails?(progress.ecrits??0)/progress.objectif_mails:1):(now.trouves?now.lus/now.trouves:0);$('h-bar').style.transform=`scaleX(${Math.min(1,ratio)})`;
     for (const [id, f] of frames) {
       const a = world.actors.get(id);
