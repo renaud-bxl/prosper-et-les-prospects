@@ -67,6 +67,12 @@ Chaque site est analysé dans un travailleur isolé avec un délai maximal ; une
 
 Les sites publics peuvent être incomplets ou inaccessibles. Les signaux sont des observations automatiques, à vérifier avant usage : l’absence d’un module détecté ne prouve pas l’absence du service. Les commerces sans contact public peuvent être écartés. Les données cartographiques dépendent d’OpenStreetMap et des services de tuiles publics.
 
+## Suivi fiable des missions — 1.0.5
+
+Le suivi attend le journal enregistré avant de jouer les nouveaux événements. Une reconnexion récupère les gestes manqués dans leur ordre, sans redémarrer la recherche. Les compteurs du haut utilisent les résultats enregistrés ; les personnages jouent les visites à leur rythme.
+
+Un délai temporaire de rédaction n’arrête plus la mission après trois commerces. L’équipe essaie d’autres candidats jusqu’à l’objectif ou aux limites de recherche et de rédaction. Pour un objectif de 60 mails, le budget est de 80 commerces soumis à la rédaction par exécution, avec au plus deux essais par commerce. Un défaut permanent de connexion ou de configuration demande une intervention ; le bilan conserve les résultats et permet la reprise des éléments manquants.
+
 ## Objectifs, reprise et informations — 1.0.3
 
 Un **objectif de contacts qualifiés** ne compte pas les commerces simplement repérés : il faut une adresse de contact relevée et un score suffisant. Avec un assistant actif, l’objectif de mails compte les brouillons réellement préparés. La recherche peut donc examiner davantage de commerces et élargir le rayon de départ, avec des bornes de **250 commerces** et **20 km**. Les compteurs distinguent commerces repérés, examinés, contacts retenus et mails préparés.

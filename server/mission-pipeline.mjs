@@ -32,25 +32,28 @@ export async function runMissionPipeline(config, { discover, read, score, write,
   const entries = new Map(), qualified = new Set(), seen = new Set(), claimedEmails = new Set();
   const reads = new Queue(), writes = new Queue(), matches = new Queue();
   const changes = new Set(), workerFailures = [];
-  let pendingReads = 0, pendingWrites = 0, draftJobs = 0, consecutiveErrors = 0, writingBlocked = null, fatal = false;
+  let pendingReads = 0, pendingWrites = 0, activeWrites = 0, draftJobs = 0, draftFailures = 0, consecutiveErrors = 0, writingBlocked = null, writingBlockedCode = null, fatal = false;
   const changed = () => { for (const resolve of changes) resolve(); changes.clear(); };
   const waitChange = () => new Promise((resolve) => changes.add(resolve));
   const latest = (id) => saved(id) ?? entries.get(id);
   const record = (id, fields) => { Object.assign(entries.get(id), fields); update(id, fields); };
   const refresh = () => {
-    counts.retenus = 0; counts.ecrits = 0;
-    for (const id of qualified) {
+    counts.retenus = 0; counts.ecrits = 0; counts.erreurs_redaction = 0;
+    // Une erreur historique réparée n'est plus un mail manquant. Le journal garde son événement.
+    for (const id of entries.keys()) {
       const row = latest(id);
-      if (!row || row.status === 'refuse') continue;
+      if (row?.status === 'erreur' && !row.mail?.trim()) counts.erreurs_redaction++;
+      if (!qualified.has(id) || !row || row.status === 'refuse') continue;
       counts.retenus++;
       if (row.mail?.trim()) counts.ecrits++;
     }
   };
-  const reached = () => { refresh(); return counts.retenus >= targets.objectif_contacts && counts.ecrits >= targets.objectif_mails; };
+  const reached = () => counts.retenus >= targets.objectif_contacts && counts.ecrits >= targets.objectif_mails;
   const stopDiscovery = () => fatal || reached() || Boolean(writingBlocked && counts.retenus >= targets.objectif_contacts);
   const progress = () => { refresh(); emit('chef', 'progress', null, { ...counts, ...targets, examines: counts.lus,
     objectif_atteint: reached(), a_reprendre: targets.objectif_mails ? Math.max(0, targets.objectif_mails - counts.ecrits) : 0,
-    writing_blocked: writingBlocked }); };
+    writing_blocked: writingBlocked, writing_blocked_code: writingBlockedCode,
+    tentatives_redaction: draftJobs, limite_redactions: maxDraftJobs, echecs_redaction: draftFailures }); };
 
   // Seed persisted state before starting workers. A default database score of0
   // is not evidence that a trouve/lecture row was actually analysed.
@@ -73,7 +76,6 @@ export async function runMissionPipeline(config, { discover, read, score, write,
     const analysed = analysedStatuses.has(row.status) || hasMail || analysisEvidence;
     if (analysed) counts.lus++;
     if (rejectedStatuses.has(row.status)) counts.ecartes++;
-    if (row.status === 'erreur' && !hasMail) counts.erreurs_redaction++;
     const addresses = addressesOf(row);
     const address = hasMail || decided ? addresses[0] : addresses.find(email => !claimedEmails.has(email));
     const duplicate = address && claimedEmails.has(address);
@@ -100,14 +102,25 @@ export async function runMissionPipeline(config, { discover, read, score, write,
   const writer = async (number) => {
     for (let job; (job = await writes.next()); ) {
       const agent = `redacteur-${number}`, { place, lecture, note } = job;
+      let executing = false;
       try {
         refresh();
+        // Une reprise peut contenir plus de candidats mémorisés que de mails manquants.
+        // Réserver les appels actifs évite de dépasser le quota avec le deuxième rédacteur.
+        while (!writingBlocked && counts.ecrits < targets.objectif_mails && counts.ecrits + activeWrites >= targets.objectif_mails) { await waitChange(); refresh(); }
         if (writingBlocked || counts.ecrits >= targets.objectif_mails || latest(place.id)?.status === 'refuse' || latest(place.id)?.mail?.trim()) {
           if (!latest(place.id)?.mail?.trim() && latest(place.id)?.status !== 'refuse') record(place.id, { status: 'analyse' });
           continue;
         }
-        if (draftJobs >= maxDraftJobs) { writingBlocked = 'model_budget'; record(place.id, { status: 'analyse' }); continue; }
+        if (draftJobs >= maxDraftJobs) {
+          writingBlocked = 'model_budget'; writingBlockedCode = 'model_budget'; record(place.id, { status: 'analyse' });
+          emit('chef', 'writing:blocked', null, { reason: writingBlocked, code: writingBlockedCode,
+            message: `La limite de ${maxDraftJobs} candidats essayés en rédaction dans cette exécution est atteinte. Les brouillons et les candidats restants sont conservés pour une reprise explicite.`,
+            tentatives_redaction: draftJobs, limite_redactions: maxDraftJobs });
+          continue;
+        }
         draftJobs++;
+        activeWrites++; executing = true;
         record(place.id, { status: 'ecriture' });
         emit(agent, 'start', place.id, { name: place.name });
         try {
@@ -121,14 +134,28 @@ export async function runMissionPipeline(config, { discover, read, score, write,
           consecutiveErrors = 0;
           emit(agent, 'done', place.id, { name: place.name, ...draft, ...language, to: lecture.emails[0], duree_ms: result.duree_ms, attempts: result.attempts ?? 1 });
         } catch (error) {
-          counts.erreurs_redaction++; consecutiveErrors++;
+          draftFailures++;
           const row = latest(place.id);
           if (row && !row.mail?.trim() && !['valide', 'refuse'].includes(row.status)) record(place.id, { status: 'erreur', signals: signauxRedaction(row.signals, error) });
           const details = erreurRedaction(error);
           emit(agent, 'error', place.id, { name: place.name, ...details });
-          if (['engine_missing', 'engine_start_failed', 'engine_exit_failed', 'engine_reported_error', 'tool_use_blocked'].includes(details.code) || consecutiveErrors >= 3) writingBlocked = 'writing_blocked';
+          // Un site lent n'établit pas une panne générale du moteur. Le candidat reste
+          // reprenable et les suivants continuent, dans le budget borné de cette exécution.
+          const transient = details.code === 'redaction_timeout' && details.retryable === true;
+          consecutiveErrors = transient ? 0 : consecutiveErrors + 1;
+          if (['engine_missing', 'engine_auth_required', 'engine_start_failed', 'engine_exit_failed', 'engine_reported_error', 'tool_use_blocked'].includes(details.code) || consecutiveErrors >= 3) {
+            writingBlocked = 'writing_blocked'; writingBlockedCode = details.code;
+            emit('chef', 'writing:blocked', null, { reason: writingBlocked, code: details.code,
+              message: 'La rédaction nécessite une intervention. Les résultats enregistrés et les mails manquants sont conservés.',
+              tentatives_redaction: draftJobs, limite_redactions: maxDraftJobs });
+          }
         }
-      } finally { pendingWrites--; try { progress(); } finally { changed(); } }
+      } finally {
+        if (executing) activeWrites--; pendingWrites--;
+        try { progress(); } finally { changed(); }
+        // Même une longue file de candidats sautés doit laisser répondre l'API entre deux jobs.
+        await new Promise((resolve) => setImmediate(resolve));
+      }
     }
   };
   const reader = async (number) => {
@@ -166,11 +193,11 @@ export async function runMissionPipeline(config, { discover, read, score, write,
             pendingWrites++; record(place.id, { status: 'a_ecrire' }); writes.push({ place, lecture, note });
           }
         }
-      } finally { pendingReads--; try { progress(); } finally { changed(); } }
+      } finally { pendingReads--; try { progress(); } finally { changed(); } await new Promise((resolve) => setImmediate(resolve)); }
     }
   };
   const matcher = async () => { for (let place; (place = await matches.next()); ) { try { await match(place); } catch {} } };
-  const supervise = (task) => task.catch((error) => { workerFailures.push(error); fatal = true; writingBlocked = 'workflow_failed'; changed(); });
+  const supervise = (task) => task.catch((error) => { workerFailures.push(error); fatal = true; writingBlocked = 'workflow_failed'; writingBlockedCode = 'workflow_failed'; changed(); });
   const readerTasks = Array.from({ length: readersCount }, (_, i) => supervise(reader(i + 1)));
   const writerTasks = targets.objectif_mails ? [supervise(writer(1)), supervise(writer(2))] : [];
   const matchTasks = match ? [matcher(), matcher()] : [];
@@ -209,7 +236,8 @@ export async function runMissionPipeline(config, { discover, read, score, write,
     ?? (counts.trouves >= targets.limite_scan ? 'scan_limit' : discovery?.reason) ?? 'radius_exhausted';
   const partial = !objectiveReached || fatal || reason === 'source_error';
   const result = { ...counts, ...targets, examines: counts.lus, objectif_atteint: objectiveReached,
-    a_reprendre: Math.max(0, targets.objectif_mails - counts.ecrits), reason, exhausted: reason !== 'scan_limit' && discovery?.exhausted === true, writing_blocked: writingBlocked,
+    a_reprendre: Math.max(0, targets.objectif_mails - counts.ecrits), reason, exhausted: reason !== 'scan_limit' && discovery?.exhausted === true, writing_blocked: writingBlocked, writing_blocked_code: writingBlockedCode,
+    tentatives_redaction: draftJobs, limite_redactions: maxDraftJobs, echecs_redaction: draftFailures,
     rayon: discovery?.rayon ?? config.recherche.rayon_m, queries: discovery?.queries ?? null,
     status: fatal && counts.lus === 0 ? 'erreur' : partial ? 'partiel' : 'fini', erreur: fatal && counts.lus === 0, partiel: partial };
   emit('eclaireur', 'done', null, { ...result, demandes: targets.objectif_contacts });

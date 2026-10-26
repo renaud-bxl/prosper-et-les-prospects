@@ -4,6 +4,7 @@ import { t, getLang, setLang } from './i18n.js';
 import { l } from './i18n-launch.js';
 import { initTheme } from './theme.js';
 import { createUpdateUI } from './updates-ui.js';
+import { createMissionFeed } from './mission-feed.js';
 // Le QG des agents : on choisit une ville sur la carte de France (toutes les villes apparaissent quand on zoome), le métier,
 // combien d'établissements, ce qu'on veut récupérer, son offre et ses consignes de mail ; la caméra plonge sur la ville
 // en pixel art et l'équipe s'y met, en direct. On clique un commerce pour voir ce qui lui manque, ses contacts et le mail.
@@ -226,6 +227,8 @@ async function replay(id) {
   runId = run.id;
   if(!CINE) history.replaceState(null,'', '?run='+encodeURIComponent(runId));
   liveRun = null;
+  healthExpected=false;healthLost=false;
+  missionFeed.clear();
   events = await fetch(`/api/runs/${run.id}/events`).then((r) => r.json());
   for(const p of st.places ?? []) if(['valide','refuse'].includes(p.status)) events.push({agent:'chef',type:'decision',place_id:p.id,data:{decision:p.status,objet:p.objet,mail:p.mail}});
   const start = events.find((e) => e.agent === 'chef' && e.type === 'start');
@@ -251,13 +254,12 @@ async function launch(p) {
   history.replaceState(null,'','?run='+encodeURIComponent(runId));
   buffer = [];
   events = [];
-  pushed.clear();
-  follow(runId);
   setMode('plongee');
+  const following = follow(runId);
   $('mission-status').hidden=false; $('mission-status').className=''; $('mission-status').textContent=l('working');
+  await following;
   const built = buildCity(p.centre, p.rayon_m);
-  await carte.flyTo(p.centre.lat, p.centre.lon, 14.4, 2600);
-  try { await built; } catch(e) { $('loading').hidden=true; setMode('carte'); throw e; }
+  try { await Promise.all([built, following, carte.flyTo(p.centre.lat, p.centre.lon, 14.4, 2600)]); } catch(e) { $('loading').hidden=true; setMode('carte'); throw e; }
   world.reset();
   enterCity();
   for (const e of buffer.splice(0)) world.push(e);
@@ -266,36 +268,47 @@ async function launch(p) {
 // Tous les gestes reçus en direct, rangés par mission : une mission rapide peut commencer avant que la page sache laquelle suivre.
 let healthExpected=false,healthPending=false,healthLost=false;
 setInterval(async()=>{if(!healthExpected||healthPending||document.hidden)return;healthPending=true;try{const response=await fetch('/api/health',{signal:AbortSignal.timeout(5000),cache:'no-store'});if(!response.ok)throw new Error();if(healthExpected&&healthLost){healthLost=false;$('mission-status').className='';$('mission-status').textContent=l('working');}}catch{if(healthExpected){healthLost=true;$('mission-status').hidden=false;$('mission-status').className='error';$('mission-status').textContent=l('serverUnresponsive');}}finally{healthPending=false;}},12000);
-const heard = new Map();
-const pushed = new Set();
-function deliver(e) {
-  if (e.seq != null) { if (pushed.has(e.seq)) return; pushed.add(e.seq); }
+function deliver(e, { recovered }) {
   events.push(e);
   if (world && mode === 'ville') world.push(e); else buffer.push(e);
+  if (!recovered) missionStatus(e);
 }
+function missionStatus(e) {
+  const status=$('mission-status');
+  if(e.type==='error' && !e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='error';status.textContent=t(e.data?.message ?? l('failed'));}
+  if(e.type==='retry' && e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='';status.textContent=l('retryingDraft');}
+  if(e.agent==='chef' && ['start','resume','drafts:start'].includes(e.type)) {healthExpected=true;status.hidden=false;status.className='';status.textContent=l('working');}
+  if(e.agent==='chef' && e.type==='drafts:start' && world) world.writeGo=true;
+  if(e.agent==='chef' && e.type==='drafts:end') {healthExpected=false;status.hidden=false;status.className=e.data?.status==='failed'||e.data?.failed>0?'partial':'done';status.textContent=l('draftsCompleted');}
+  if(e.agent==='chef' && e.type==='end') {healthExpected=false;results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':e.data?.partiel?'partial':'done';status.textContent=l(e.data?.erreur?'failed':e.data?.partiel?'partial':'completed');}
+}
+const missionFeed = createMissionFeed({
+  loadHistory: async id => {
+    const response=await fetch(`/api/runs/${encodeURIComponent(id)}/events`,{signal:AbortSignal.timeout(15000),cache:'no-store'});
+    if(!response.ok)throw new Error(l('networkError'));
+    return response.json();
+  },
+  onEvent: deliver,
+  onSyncError: showError,
+  onSynced: all => {
+    const latest=all.findLast(e=>e.agent==='chef' && ['start','resume','drafts:start','drafts:end','end'].includes(e.type));
+    if(latest)missionStatus(latest);
+  },
+});
 function connect() {
   const es = new EventSource('/api/stream');
+  es.onopen=()=>{if(liveRun)missionFeed.sync().catch(showError);};
+  es.onerror=()=>{missionFeed.pause();if(liveRun&&healthExpected){$('mission-status').hidden=false;$('mission-status').className='';$('mission-status').textContent=l('streamRecovering');}};
   es.onmessage = (m) => {
-    const e = JSON.parse(m.data);
-    if (!heard.has(e.run_id)) heard.set(e.run_id, []);
-    heard.get(e.run_id).push(e);
-    if (liveRun && e.run_id === liveRun) {
-      deliver(e);
-      const status=$('mission-status');
-      if(e.type==='error' && !e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='error';status.textContent=t(e.data?.message ?? l('failed'));}
-      if(e.type==='retry' && e.agent?.startsWith('redacteur-')) {status.hidden=false;status.className='';status.textContent=l('retryingDraft');}
-      if(e.agent==='chef' && e.type==='drafts:start' && world) world.writeGo=true;
-      if(e.agent==='chef' && e.type==='end') {healthExpected=false;results.autoOpen(e.run_id).catch(()=>{});status.hidden=false;status.className=e.data?.erreur?'error':e.data?.partiel?'partial':'done';status.textContent=l(e.data?.erreur?'failed':e.data?.partiel?'partial':'completed');}
-    }
+    try { missionFeed.receive(JSON.parse(m.data)); } catch(error) { showError(error); }
   };
 }
 /** Suivre une mission en direct : ses gestes déjà passés d'abord (reçus ou relus sur le serveur), puis la suite. */
 async function follow(id) {
   healthExpected=true;healthLost=false;liveRun = id;
-  const past = await fetch(`/api/runs/${id}/events`).then((r) => r.json()).catch(() => []);
-  const all = [...past, ...(heard.get(id) ?? [])].map((e) => ({ ...e, data: typeof e.data === 'string' ? JSON.parse(e.data) : e.data }));
-  all.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  for (const e of all) deliver(e);
+  // A journal failure must not abandon the already-running search or the city
+  // transition. The feed keeps live events queued and retries on its own.
+  await missionFeed.select(id).catch(showError);
 }
 
 /* ------------------------------------------------------------------ cliquer un commerce */
@@ -337,7 +350,7 @@ async function sendReader(poi) {
   if (!runId) throw new Error(l('noMission'));
   const busy = (id) => { const a = world.actors.get(id); return a.busy || a.lane.length; };
   const agent = ['lecteur-1', 'lecteur-2', 'lecteur-3'].find((id) => !busy(id)) ?? 'lecteur-1';
-  if (liveRun !== runId) { for (const e of events) if (e.seq != null) pushed.add(e.seq); liveRun = runId; } // la suite arrive par le flux en direct
+  if (liveRun !== runId) { liveRun = runId; await missionFeed.select(runId, { delivered: events }); } // la suite arrive par le flux en direct
   const r = await fetch(`/api/runs/${runId}/visite`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: poi.name, lat: poi.lat, lon: poi.lon, type: poi.sub || poi.cls, agent }) });
   if (!r.ok) throw new Error((await r.json()).error ?? l('readerFailed'));
   world.teamSent = true;
@@ -448,7 +461,7 @@ async function boot() {
   window.__qg.ready = true;
   if (CINE) await cinema(params.get('cinema') || asked || (await biggestRun()));
   else if (st.running && st.run?.status==='en_cours' && (!asked || asked===st.run.id)) {
-    runId=st.run.id; buffer=[]; events=[]; pushed.clear();
+    runId=st.run.id; buffer=[]; events=[];
     await follow(runId);
     const centre={lat:st.run.lat,lon:st.run.lon};
     carte.select({name:st.run.ville,...centre,pays:st.run.pays});

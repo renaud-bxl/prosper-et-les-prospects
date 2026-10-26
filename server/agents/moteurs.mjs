@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import { join, delimiter, isAbsolute, resolve } from 'node:path';
 import { statSync, accessSync, constants, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { RedactionError, avecRepriseRedaction } from '../redaction-recovery.mjs';
+import { RedactionError, avecRepriseRedaction, diagnosticRedaction } from '../redaction-recovery.mjs';
 
 export const SCHEMA_BROUILLON = {
   type: 'object',
@@ -145,13 +145,45 @@ export function validerBrouillon(value) {
   return Object.fromEntries(['constat', 'objet', 'mail'].map((key) => [key, value[key].trim()]));
 }
 
+function authentificationRequise(value) {
+  if (!value || typeof value !== 'object') return false;
+  const codes = ['unauthorized', 'not_logged_in', 'authentication_required', 'authentication_error', 'invalid_api_key', 'token_expired', 'refresh_token_expired', 'refresh_token_reused'];
+  const code = String(value.code ?? value.error?.code ?? value.codexErrorInfo ?? '').toLowerCase();
+  if (codes.includes(code) || value.httpStatusCode === 401) return true;
+  // Le JSONL exec officiel expose aussi des erreurs avec un simple champ message.
+  // Seuls des préfixes d'authentification canoniques sont reconnus, sans conserver leur contenu.
+  const message = String(value.message ?? value.error?.message ?? '').slice(0, 4000);
+  return /^(?:error:\s*)?(?:not logged in\b|authentication required\b|unauthorized\b|your (?:access|refresh) token (?:has expired|could not be refreshed)\b|token refresh failed\b|refresh token (?:has expired|was already used)\b|unexpected status 401\b)/i.test(message.trim());
+}
+
+function erreurAuthentification(moteur) {
+  return new RedactionError('engine_auth_required', moteur === 'codex'
+    ? 'Codex demande une connexion valide à votre compte ChatGPT. Reconnectez ce compte dans Codex ou son CLI avant de reprendre les mails manquants.'
+    : 'Claude Code demande une connexion valide à votre abonnement Claude. Reconnectez ce compte avant de reprendre les mails manquants.');
+}
+
+const TYPES_EVENEMENTS = new Set(['thread.started', 'turn.started', 'turn.completed', 'turn.failed', 'item.started', 'item.updated', 'item.completed', 'error']);
+function resumeEvenements(output) {
+  const evenements = {}; let dernier_evenement, auth = false;
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event; try { event = JSON.parse(line); } catch { continue; }
+    const type = TYPES_EVENEMENTS.has(event?.type) ? event.type : 'inconnu';
+    evenements[type] = (evenements[type] ?? 0) + 1; dernier_evenement = type;
+    if ((event?.type === 'error' || event?.type === 'turn.failed') && authentificationRequise(event.error ?? event)) auth = true;
+  }
+  return { evenements, dernier_evenement, auth };
+}
+
 export function lireSortieMoteur(moteur, output) {
   if (moteur === 'claude') {
     const result = JSON.parse(output);
+    if (result.is_error && authentificationRequise(result)) throw erreurAuthentification(moteur);
     if (result.is_error) throw new RedactionError('engine_reported_error', 'Claude Code a signalé une erreur de rédaction. Vérifiez la connexion et le modèle choisi.');
     return validerBrouillon(result.structured_output ?? JSON.parse(result.result));
   }
   const events = output.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  if (events.some((event) => (event.type === 'error' || event.type === 'turn.failed') && authentificationRequise(event.error ?? event))) throw erreurAuthentification(moteur);
   if (events.some((event) => event.type === 'error' || event.type === 'turn.failed')) throw new RedactionError('engine_reported_error', 'Codex a interrompu la rédaction. Vérifiez la connexion ChatGPT et le modèle choisi.');
   // Les versions CLI peuvent exposer quelques outils internes malgré les options ci-dessus.
   // Un événement d'action n'est jamais accepté comme source d'un brouillon.
@@ -176,11 +208,22 @@ async function executerUneRedaction(system, prompt, config = {}) {
   const schemaPath = join(cwd, 'brouillon.schema.json');
   writeFileSync(schemaPath, JSON.stringify(SCHEMA_BROUILLON), { mode: 0o600 });
   const debut = Date.now();
+  let out = '', stdoutBytes = 0, stderrBytes = 0, firstActivity = null, lastActivity = null, stderrAuth = false, stderrTail = '', exitCode, exitSignal;
+  const activity = () => { const elapsed = Date.now() - debut; firstActivity ??= elapsed; lastActivity = elapsed; };
+  const diagnostic = () => {
+    const stream = moteur === 'codex' ? resumeEvenements(out) : { evenements: {} };
+    return diagnosticRedaction({ moteur, duree_ms: Date.now() - debut, timeout_ms: timeoutMs,
+      stdout_octets: stdoutBytes, stderr_octets: stderrBytes, premiere_activite_ms: firstActivity,
+      derniere_activite_ms: lastActivity, silence_ms: Date.now() - debut - (lastActivity ?? 0),
+      activite: stdoutBytes ? stderrBytes ? 'stdout_stderr' : 'stdout' : stderrBytes ? 'stderr' : 'aucune',
+      evenements: stream.evenements, dernier_evenement: stream.dernier_evenement,
+      ...((stderrAuth || stream.auth) ? { code_cli: 'auth_required' } : {}), exit_code: exitCode, signal: exitSignal });
+  };
   try {
     const { binary, args } = commandeRedaction(system, config, schemaPath);
     const output = await new Promise((resolve, reject) => {
       const child = spawn(binary, args, { cwd, env: envSansCleApi(), stdio: ['pipe', 'pipe', 'pipe'], shell: false });
-      let out = '', size = 0, settled = false, killer, stoppingError = null;
+      let size = 0, settled = false, killer, stoppingError = null;
       const finish = (error, value) => {
         if (settled) return;
         settled = true;
@@ -189,6 +232,8 @@ async function executerUneRedaction(system, prompt, config = {}) {
       };
       const stop = (error) => {
         if (settled || stoppingError) return;
+        // Un CLI qui a déjà signalé une connexion invalide ne doit jamais être relancé comme un simple délai.
+        if (error.code === 'redaction_timeout' && (stderrAuth || resumeEvenements(out).auth)) error = erreurAuthentification(moteur);
         stoppingError = error;
         clearTimeout(timer);
         child.kill('SIGTERM');
@@ -197,26 +242,37 @@ async function executerUneRedaction(system, prompt, config = {}) {
       };
       const timer = setTimeout(() => stop(new RedactionError('redaction_timeout', `${moteur === 'claude' ? 'Claude Code' : 'Codex'} : délai de rédaction dépassé (${timeoutMs / 1000} s).`, { retryable: true })), timeoutMs);
       child.stdout.on('data', (chunk) => {
+        stdoutBytes += chunk.length; activity();
         size += chunk.length;
         if (size > 1_000_000) return stop(new RedactionError('output_too_large', 'Sortie du moteur trop volumineuse.'));
         out += chunk;
       });
       // Le texte brut de stderr peut contenir des données du site ou des détails d'authentification.
-      child.stderr.on('data', (chunk) => { size += chunk.length; if (size > 1_000_000) stop(new RedactionError('output_too_large', 'Sortie du moteur trop volumineuse.')); });
+      child.stderr.on('data', (chunk) => {
+        stderrBytes += chunk.length; activity(); size += chunk.length;
+        // Fenêtre éphémère bornée, uniquement pour reconnaître une erreur de connexion canonique.
+        // Ni cette fenêtre ni stderr ne sont renvoyés dans les événements ou la base.
+        stderrTail = (stderrTail + chunk.toString('utf8')).slice(-4096);
+        stderrAuth ||= stderrTail.split(/\r?\n/).some(message => authentificationRequise({ message }));
+        if (size > 1_000_000) stop(new RedactionError('output_too_large', 'Sortie du moteur trop volumineuse.'));
+      });
       child.stdin.on('error', () => {}); // Le processus peut refuser sa configuration avant la lecture du prompt.
       child.on('error', (error) => finish(new RedactionError(error.code === 'ENOENT' ? 'engine_missing' : 'engine_start_failed', error.code === 'ENOENT'
         ? `${moteur === 'claude' ? 'Claude Code' : 'Codex CLI'} introuvable. Installez-le et connectez votre abonnement, puis relancez.`
         : `Impossible de démarrer ${moteur} (${error.code ?? 'erreur système'}).`)));
-      child.on('exit', () => {
+      child.on('exit', (code, signal) => {
+        exitCode = code; exitSignal = signal;
         if (!stoppingError) return;
         clearTimeout(killer);
         child.stdout.destroy(); child.stderr.destroy(); child.stdin.destroy();
         finish(stoppingError); // La reprise ne peut commencer qu'après la sortie effective de ce CLI.
       });
       child.on('close', (code, signal) => {
+        exitCode = code; exitSignal = signal;
         clearTimeout(killer);
         if (stoppingError) return finish(stoppingError);
-        if (code !== 0) return finish(new RedactionError('engine_exit_failed', `${moteur === 'claude' ? 'Claude Code' : 'Codex'} a échoué (${signal ?? `code ${code}`}). Vérifiez la version du CLI, sa connexion et le modèle choisi. Aucun brouillon créé.`));
+        if (code !== 0) return finish(stderrAuth || resumeEvenements(out).auth ? erreurAuthentification(moteur)
+          : new RedactionError('engine_exit_failed', `${moteur === 'claude' ? 'Claude Code' : 'Codex'} a échoué (${signal ?? `code ${code}`}). Vérifiez la version du CLI, sa connexion et le modèle choisi. Aucun brouillon créé.`));
         finish(null, out);
       });
       child.stdin.end(prompt);
@@ -226,7 +282,10 @@ async function executerUneRedaction(system, prompt, config = {}) {
       if (error instanceof SyntaxError) throw new RedactionError('invalid_json', `${moteur} a rendu une sortie JSON invalide. Aucun brouillon créé.`);
       throw error;
     }
-  } finally { rmSync(cwd, { recursive: true, force: true }); }
+  } catch (error) {
+    if (error instanceof RedactionError) error.diagnostic = diagnostic();
+    throw error;
+  } finally { stderrTail = ''; rmSync(cwd, { recursive: true, force: true }); }
 }
 
 export async function executerRedaction(system, prompt, config = {}) {

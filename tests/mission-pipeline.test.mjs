@@ -104,6 +104,36 @@ test('une panne de source ne perd pas les lectures et mails déjà en attente', 
   assert.equal(f.outcome.lus, 3); assert.equal(f.outcome.ecrits, 3); assert.equal(f.outcome.erreur, false);
 });
 
+test('trois délais transitoires consécutifs n’arrêtent pas la mission : les candidats suivants atteignent le quota', { timeout: 3000 }, async () => {
+  let calls = 0;
+  const f = await fixture(Array.from({ length: 30 }, (_, i) => place(i)), { config: config(3), write: async () => {
+    if (++calls <= 3) throw new RedactionError('redaction_timeout', 'Délai transitoire fixture', { retryable: true });
+    return draft;
+  } });
+  assert.equal(f.outcome.status, 'fini'); assert.equal(f.outcome.objectif_atteint, true); assert.equal(f.outcome.ecrits, 3);
+  assert.equal(f.outcome.writing_blocked, null); assert.equal(f.outcome.erreurs_redaction, 3); assert.equal(f.outcome.echecs_redaction, 3);
+  assert.equal(f.outcome.tentatives_redaction, 6); assert.equal(f.events.some((e) => e.type === 'writing:blocked'), false);
+});
+
+test('80 candidats en échec transitoire terminent sur une limite explicite et reprenable, jamais sur trois délais', { timeout: 3000 }, async () => {
+  const f = await fixture(Array.from({ length: 250 }, (_, i) => place(i)), { config: config(60), write: async () => {
+    throw new RedactionError('redaction_timeout', 'Délai transitoire fixture', { retryable: true });
+  } });
+  assert.equal(f.written.length, 80); assert.equal(f.outcome.tentatives_redaction, 80); assert.equal(f.outcome.limite_redactions, 80);
+  assert.equal(f.outcome.status, 'partiel'); assert.equal(f.outcome.reason, 'model_budget'); assert.equal(f.outcome.exhausted, false);
+  assert.equal(f.outcome.erreurs_redaction, 80); assert.equal(f.outcome.a_reprendre, 60); assert.equal(f.outcome.ecrits, 0);
+  assert.ok(f.events.some((e) => e.type === 'writing:blocked' && e.data.code === 'model_budget'));
+});
+
+test('authentification ou garde-fou bloqués ne sont jamais contournés par une boucle sur les commerces', { timeout: 3000 }, async () => {
+  for (const code of ['engine_auth_required', 'tool_use_blocked']) {
+    const f = await fixture(Array.from({ length: 30 }, (_, i) => place(i)), { write: async () => { throw new RedactionError(code, 'Intervention nécessaire fixture'); } });
+    assert.equal(f.outcome.status, 'partiel'); assert.equal(f.outcome.writing_blocked_code, code);
+    assert.ok(f.written.length <= 2); assert.equal(f.outcome.ecrits, 0); assert.ok(f.outcome.retenus >= 8);
+    assert.ok(f.events.some((e) => e.type === 'writing:blocked' && e.data.code === code));
+  }
+});
+
 test('la mission refuse le verrou de mise à jour acquis pendant une lecture asynchrone', async () => {
   let release, updating = false, mutations = 0;
   const body = new Promise((resolve) => { release = resolve; });

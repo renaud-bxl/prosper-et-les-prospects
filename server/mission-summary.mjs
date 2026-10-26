@@ -7,7 +7,7 @@ export function adressesContact(place) {
 
 export function resumerEvenements(first = {}, last = {}) {
   const summary = {};
-  for (const key of ['trouves','lus','retenus','ecrits','ecartes','erreurs_redaction','examines','a_reprendre','objectif_atteint','reason','exhausted','queries','status','erreur','partiel','writing_blocked']) summary[key] = last[key] ?? null;
+  for (const key of ['trouves','lus','retenus','ecrits','ecartes','erreurs_redaction','examines','a_reprendre','objectif_atteint','reason','exhausted','queries','status','erreur','partiel','writing_blocked','writing_blocked_code','tentatives_redaction','limite_redactions','echecs_redaction']) summary[key] = last[key] ?? null;
   for (const key of ['objectif_contacts','objectif_mails','limite_scan','rayon_max_m','score_minimum']) summary[key] = last[key] ?? first[key] ?? null;
   summary.rayon = last.rayon ?? first.rayon ?? null;
   return summary;
@@ -45,5 +45,6 @@ export function bilanReprise(rows, previous = {}, { minimum = 60, objectifMails 
     a_reprendre: knownMails === null ? pending : Math.max(0, knownMails - ecrits), objectif_atteint: reached,
     status, erreur: status === 'erreur', partiel: status === 'partiel',
     reason: failed ? 'workflow_failed' : reached ? 'objective_reached' : previous.reason ?? (partial ? 'writing_blocked' : null),
-    writing_blocked: status === 'fini' ? null : previous.writing_blocked ?? null };
+    writing_blocked: status === 'fini' ? null : previous.writing_blocked ?? null,
+    writing_blocked_code: status === 'fini' ? null : previous.writing_blocked_code ?? null };
 }

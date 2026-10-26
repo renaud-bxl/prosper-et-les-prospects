@@ -49,6 +49,7 @@ test('analysed/a_ecrire/ecriture/engine_missing rows retry writing from persiste
  assert.deepEqual(new Set(f.written.map(row=>row.id)),new Set(['0','1','2','3']));
  assert.ok(f.written.every(row=>row.lecture.emails[0]===`contact-${row.id}@example.invalid`&&row.lecture.excerpt==='Informations publiques persistées.'&&row.note.score===75));
  assert.equal(f.rows.get('3').signals.redaction_error,undefined);
+ assert.equal(f.result.erreurs_redaction,0,'the repaired historic engine_missing is no longer an outstanding error');
  assert.ok(f.written.every(row=>row.lecture.email_source.endsWith('/contact')));
 });
 
